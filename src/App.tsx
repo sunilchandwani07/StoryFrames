@@ -4,7 +4,7 @@ import { Button } from "./components/ui/button";
 import { Textarea } from "./components/ui/textarea";
 import { Card, CardContent, CardFooter } from "./components/ui/card";
 import { Label } from "./components/ui/label";
-import { Loader2, RefreshCw, Image as ImageIcon, Check, AlertCircle, Upload, X, Plus, Minus, LayoutTemplate, ArrowRight, Download, FileArchive, Settings2, DownloadCloud, ShieldAlert } from "lucide-react";
+import { Loader2, RefreshCw, Image as ImageIcon, Check, AlertCircle, Upload, X, Plus, Minus, LayoutTemplate, ArrowRight, Download, FileArchive, Settings2, DownloadCloud, ShieldAlert, Shirt, User, MapPin } from "lucide-react";
 import { Toaster } from "./components/ui/sonner";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
@@ -22,6 +22,7 @@ type Frame = {
   cameraIntent?: string;
   lightingIntent?: string;
   characterExpression?: string;
+  costumeDesign?: string;
   cinematographyNotes?: string;
   imageUrl?: string;
   status: "pending" | "generating" | "completed" | "error";
@@ -49,6 +50,7 @@ type Resolution = "original" | "720p" | "1080p" | "4k";
 export default function App() {
   const [prompt, setPrompt] = useState("");
   const [sampleImage, setSampleImage] = useState<{ url: string; mimeType: string; data: string } | null>(null);
+  const [backgroundReferenceImage, setBackgroundReferenceImage] = useState<{ url: string; mimeType: string; data: string } | null>(null);
   const [numScenes, setNumScenes] = useState(2);
   const [framesPerScene, setFramesPerScene] = useState(3);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
@@ -62,6 +64,7 @@ export default function App() {
   const [selectedLighting, setSelectedLighting] = useState<string>("Default");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bgFileInputRef = useRef<HTMLInputElement>(null);
   const [suggestions, setSuggestions] = useState<{prompt: string, explanation: string}[]>([]);
   const [suggestedFrames, setSuggestedFrames] = useState<number | null>(null);
   const [suggestedScenesCount, setSuggestedScenesCount] = useState<number | null>(null);
@@ -91,7 +94,7 @@ export default function App() {
     aspectRatio: AspectRatio;
   } | null>(null);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, type: "character" | "background") => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -99,11 +102,16 @@ export default function App() {
     reader.onload = (event) => {
       const result = event.target?.result as string;
       const base64Data = result.split(",")[1];
-      setSampleImage({
+      const imgObj = {
         url: result,
         mimeType: file.type,
         data: base64Data,
-      });
+      };
+      if (type === "character") {
+        setSampleImage(imgObj);
+      } else {
+        setBackgroundReferenceImage(imgObj);
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -208,7 +216,7 @@ export default function App() {
     setPrompt(finalPrompt);
     setAppState("planning");
     try {
-      const planPromise = planStoryboard(finalPrompt, numScenes, framesPerScene, charactersToUse, sampleImage);
+      const planPromise = planStoryboard(finalPrompt, numScenes, framesPerScene, charactersToUse, sampleImage, backgroundReferenceImage);
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error("Storyboard planning timed out. Please try again.")), 60000)
       );
@@ -263,9 +271,9 @@ export default function App() {
     for (let frameIndex = 0; frameIndex < scene.frames.length; frameIndex++) {
       const frame = scene.frames[frameIndex];
       try {
-        const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style: Cinematic 3D Animation (e.g., Pixar/Disney style). Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. No harsh digital gradients. Texture Constraint: Maintain a consistent "Subsurface Scattering" on skin and fur. Anti-Drift Rule: Do NOT shift to "painterly" or "2D illustration" styles for medium shots. Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
+        const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style: High-end Cinematic Realism (Photorealistic textures, natural lighting). Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. No harsh digital gradients. Texture Constraint: Maintain a consistent "Subsurface Scattering" on skin and fur. Anti-Drift Rule: Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
         const backgroundConsistency = `BACKGROUND CONSISTENCY: The background architecture, landscape, and object placement MUST remain EXACTLY the same as described in the Scene Setting. Do not move buildings, trees, or landmarks between frames. DO NOT hallucinate extra characters or objects.`;
-        const directorIntent = `DIRECTOR'S INTENT: Camera: ${frame.cameraIntent || "Professional cinematography"}. Lighting: ${frame.lightingIntent || "Cinematic lighting"}. Expression: ${frame.characterExpression || "Natural and story-aligned"}. Cinematography: ${frame.cinematographyNotes || "Balanced composition"}.`;
+        const directorIntent = `DIRECTOR'S INTENT: Camera: ${frame.cameraIntent || "Professional cinematography"}. Lighting: ${frame.lightingIntent || "Cinematic lighting"}. Expression: ${frame.characterExpression || "Natural and story-aligned"}. Costume: ${frame.costumeDesign || "Consistent character attire"}. Cinematography: ${frame.cinematographyNotes || "Balanced composition"}.`;
         const fullPrompt = `${styleManifest} ${backgroundConsistency} ${directorIntent} Art Style: ${storyboard.artStyle}. Ambience/Mood: ${storyboard.ambience}. Scene Setting: ${scene.setting}. Characters: ${characterContext}. Action: ${frame.imagePrompt}`;
         
         let referenceImage = sampleImage;
@@ -276,7 +284,7 @@ export default function App() {
           refType = "scene_consistency";
         }
 
-        const generatePromise = generateFrameImage(fullPrompt, referenceImage, apiRatio as any, refType);
+        const generatePromise = generateFrameImage(fullPrompt, referenceImage, backgroundReferenceImage, apiRatio as any, refType);
         const timeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error("Image generation timed out.")), 45000)
         );
@@ -349,10 +357,11 @@ export default function App() {
     const cameraContext = finalCamera !== "Default" ? `Camera: ${finalCamera}. ` : (frame.cameraIntent ? `Camera Intent: ${frame.cameraIntent}. ` : "");
     const lightingContext = finalLighting !== "Default" ? `Lighting: ${finalLighting}. IMPORTANT: Change the shape, size, and direction of shadows of the characters to match this new lighting perfectly. Maintain strict consistency among characters, background, accessories, hair style, and everything else available in the frame. ` : (frame.lightingIntent ? `Lighting Intent: ${frame.lightingIntent}. ` : "");
     const expressionContext = frame.characterExpression ? `Character Expression: ${frame.characterExpression}. ` : "";
+    const costumeContext = frame.costumeDesign ? `Costume Design: ${frame.costumeDesign}. ` : "";
     const cinematographyContext = frame.cinematographyNotes ? `Cinematography Notes: ${frame.cinematographyNotes}. ` : "";
     
-    const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style: Cinematic 3D Animation (e.g., Pixar/Disney style). Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. No harsh digital gradients. Texture Constraint: Maintain a consistent "Subsurface Scattering" on skin and fur. Anti-Drift Rule: Do NOT shift to "painterly" or "2D illustration" styles for medium shots. Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
-    const fullPrompt = `${styleManifest} Art Style: ${storyboard.artStyle}. Ambience/Mood: ${storyboard.ambience}. Scene Setting: ${scene.setting}. Characters: ${characterContext}. ${cameraContext}${lightingContext}${expressionContext}${cinematographyContext}Action: ${frame.imagePrompt}`;
+    const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style: High-end Cinematic Realism (Photorealistic textures, natural lighting). Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. No harsh digital gradients. Texture Constraint: Maintain a consistent "Subsurface Scattering" on skin and fur. Anti-Drift Rule: Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
+    const fullPrompt = `${styleManifest} Art Style: ${storyboard.artStyle}. Ambience/Mood: ${storyboard.ambience}. Scene Setting: ${scene.setting}. Characters: ${characterContext}. ${cameraContext}${lightingContext}${expressionContext}${costumeContext}${cinematographyContext}Action: ${frame.imagePrompt}`;
 
     let referenceImage = sampleImage;
     let refType: "character" | "composition" = "character";
@@ -369,7 +378,7 @@ export default function App() {
     }
 
     try {
-      const generatePromise = generateFrameImage(fullPrompt, referenceImage, apiRatio as any, refType);
+      const generatePromise = generateFrameImage(fullPrompt, referenceImage, backgroundReferenceImage, apiRatio as any, refType);
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error("Image generation timed out.")), 45000)
       );
@@ -543,7 +552,7 @@ export default function App() {
                     <div className="relative">
                       <Textarea 
                         id="prompt"
-                        placeholder="A cyberpunk detective walking through a neon-lit alleyway in the rain..."
+                        placeholder="Paste your story idea here... Our pre-production team (Script Writer, Director, Cinematographer, etc.) will finalize it into a professional storyboard."
                         className="min-h-[120px] resize-none text-base focus-visible:ring-indigo-500 pr-10"
                         value={prompt}
                         maxLength={3000}
@@ -569,38 +578,74 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="space-y-3">
-                    <Label className="text-sm font-semibold text-zinc-700">Sample Image (Optional)</Label>
-                    <div className="flex items-center gap-4">
-                      {sampleImage ? (
-                        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="relative w-24 h-24 rounded-xl overflow-hidden border-2 border-indigo-100 shadow-sm">
-                          <img src={sampleImage.url} alt="Sample" className="w-full h-full object-cover" />
-                          <button 
-                            onClick={() => setSampleImage(null)}
-                            className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 hover:bg-black/70 transition-colors"
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-3">
+                      <Label className="text-sm font-semibold text-zinc-700">Character Reference (Optional)</Label>
+                      <div className="flex items-center gap-4">
+                        {sampleImage ? (
+                          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="relative w-full h-24 rounded-xl overflow-hidden border-2 border-indigo-100 shadow-sm">
+                            <img src={sampleImage.url} alt="Character Reference" className="w-full h-full object-cover" />
+                            <button 
+                              onClick={() => setSampleImage(null)}
+                              className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 hover:bg-black/70 transition-colors"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </motion.div>
+                        ) : (
+                          <Button 
+                            variant="outline" 
+                            className="w-full h-24 border-dashed border-2 border-zinc-200 text-zinc-500 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all"
+                            onClick={() => fileInputRef.current?.click()}
                           >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </motion.div>
-                      ) : (
-                        <Button 
-                          variant="outline" 
-                          className="w-full h-24 border-dashed border-2 border-zinc-200 text-zinc-500 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all"
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <Upload className="w-5 h-5 mr-2" />
-                          Upload Reference Image
-                        </Button>
-                      )}
-                      <input 
-                        type="file" 
-                        ref={fileInputRef} 
-                        className="hidden" 
-                        accept="image/*" 
-                        onChange={handleImageUpload} 
-                      />
+                            <User className="w-5 h-5 mr-2" />
+                            Upload Character
+                          </Button>
+                        )}
+                        <input 
+                          type="file" 
+                          ref={fileInputRef} 
+                          className="hidden" 
+                          accept="image/*" 
+                          onChange={(e) => handleImageUpload(e, "character")} 
+                        />
+                      </div>
+                      <p className="text-[10px] text-zinc-500">Upload an image to maintain character identity.</p>
                     </div>
-                    <p className="text-xs text-zinc-500">Upload a character or style reference to guide the generation.</p>
+
+                    <div className="space-y-3">
+                      <Label className="text-sm font-semibold text-zinc-700">Background Reference (Optional)</Label>
+                      <div className="flex items-center gap-4">
+                        {backgroundReferenceImage ? (
+                          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="relative w-full h-24 rounded-xl overflow-hidden border-2 border-indigo-100 shadow-sm">
+                            <img src={backgroundReferenceImage.url} alt="Background Reference" className="w-full h-full object-cover" />
+                            <button 
+                              onClick={() => setBackgroundReferenceImage(null)}
+                              className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 hover:bg-black/70 transition-colors"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </motion.div>
+                        ) : (
+                          <Button 
+                            variant="outline" 
+                            className="w-full h-24 border-dashed border-2 border-zinc-200 text-zinc-500 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all"
+                            onClick={() => bgFileInputRef.current?.click()}
+                          >
+                            <MapPin className="w-5 h-5 mr-2" />
+                            Upload Background
+                          </Button>
+                        )}
+                        <input 
+                          type="file" 
+                          ref={bgFileInputRef} 
+                          className="hidden" 
+                          accept="image/*" 
+                          onChange={(e) => handleImageUpload(e, "background")} 
+                        />
+                      </div>
+                      <p className="text-[10px] text-zinc-500">Upload a location reference (e.g., Sarojini Nagar).</p>
+                    </div>
                   </div>
 
                   <div className="flex items-start gap-2 mt-2 text-xs text-zinc-500 bg-zinc-100/50 p-2.5 rounded-md border border-zinc-200/50">
@@ -982,7 +1027,7 @@ export default function App() {
                                   <div className="space-y-4">
                                     <p className="text-sm font-medium text-zinc-800 leading-relaxed italic">"{frame.caption}"</p>
                                     
-                                    {(frame.cameraIntent || frame.characterExpression || frame.lightingIntent || frame.cinematographyNotes) && (
+                                    {(frame.cameraIntent || frame.characterExpression || frame.lightingIntent || frame.costumeDesign || frame.cinematographyNotes) && (
                                       <div className="grid grid-cols-1 gap-3 pt-3 border-t border-zinc-100">
                                         {frame.cameraIntent && (
                                           <div className="flex items-start gap-2.5">
@@ -1014,6 +1059,17 @@ export default function App() {
                                             <div className="space-y-0.5">
                                               <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Expression</p>
                                               <p className="text-xs text-zinc-600 leading-tight">{frame.characterExpression}</p>
+                                            </div>
+                                          </div>
+                                        )}
+                                        {frame.costumeDesign && (
+                                          <div className="flex items-start gap-2.5">
+                                            <div className="p-1.5 bg-rose-50 rounded-md text-rose-600">
+                                              <Shirt className="w-3.5 h-3.5" />
+                                            </div>
+                                            <div className="space-y-0.5">
+                                              <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Costume</p>
+                                              <p className="text-xs text-zinc-600 leading-tight">{frame.costumeDesign}</p>
                                             </div>
                                           </div>
                                         )}

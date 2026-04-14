@@ -179,7 +179,7 @@ export async function exportToPDF(storyboard: any, resolution: "original" | "720
           let imgHeight = imgWidth / imgRatio;
           
           // Cap height to avoid out of bounds (A4 is 297mm high)
-          const maxHeight = 180; // Leave room for caption and margins
+          const maxHeight = 120; // Reduced to leave room for metadata
           if (imgHeight > maxHeight) {
             imgHeight = maxHeight;
             imgWidth = imgHeight * imgRatio;
@@ -188,14 +188,59 @@ export async function exportToPDF(storyboard: any, resolution: "original" | "720
           // Center the image horizontally
           const xPos = margin + (contentWidth - imgWidth) / 2;
           
-          // Check if image fits on page, if not add new page
-          if (yPos + imgHeight > 280) {
+          // Check if image + metadata fits on page
+          const metadataHeight = 30; // Estimated height for metadata
+          if (yPos + imgHeight + metadataHeight > 280) {
             doc.addPage();
             yPos = 20;
           }
           
           doc.addImage(base64Data, "JPEG", xPos, yPos, imgWidth, imgHeight);
-          yPos += imgHeight + 10;
+          yPos += imgHeight + 5;
+
+          // Add Metadata (Camera, Lighting, Director's Comments)
+          doc.setFontSize(9);
+          doc.setTextColor(100, 100, 100);
+          
+          if (frame.cameraIntent) {
+            const cameraText = `CAMERA: ${frame.cameraIntent}`;
+            const splitCamera = doc.splitTextToSize(cameraText, contentWidth);
+            doc.text(splitCamera, margin, yPos);
+            yPos += (splitCamera.length * 4);
+          }
+          
+          if (frame.lightingIntent) {
+            const lightingText = `LIGHTING: ${frame.lightingIntent}`;
+            const splitLighting = doc.splitTextToSize(lightingText, contentWidth);
+            doc.text(splitLighting, margin, yPos);
+            yPos += (splitLighting.length * 4);
+          }
+
+          if (frame.characterExpression) {
+            const expressionText = `EXPRESSION: ${frame.characterExpression}`;
+            const splitExpression = doc.splitTextToSize(expressionText, contentWidth);
+            doc.text(splitExpression, margin, yPos);
+            yPos += (splitExpression.length * 4);
+          }
+
+          if (frame.costumeDesign) {
+            const costumeText = `COSTUME: ${frame.costumeDesign}`;
+            const splitCostume = doc.splitTextToSize(costumeText, contentWidth);
+            doc.text(splitCostume, margin, yPos);
+            yPos += (splitCostume.length * 4);
+          }
+
+          if (frame.cinematographyNotes) {
+            doc.setFont("helvetica", "italic");
+            const directorText = `DIRECTOR'S NOTES: ${frame.cinematographyNotes}`;
+            const splitDirector = doc.splitTextToSize(directorText, contentWidth);
+            doc.text(splitDirector, margin, yPos);
+            yPos += (splitDirector.length * 4);
+            doc.setFont("helvetica", "normal");
+          }
+
+          doc.setTextColor(0, 0, 0);
+          yPos += 10;
         } catch (error) {
           console.error(`Failed to process frame ${fIdx + 1} for PDF:`, error);
           doc.setFontSize(10);
