@@ -4,7 +4,7 @@ import { Button } from "./components/ui/button";
 import { Textarea } from "./components/ui/textarea";
 import { Card, CardContent, CardFooter } from "./components/ui/card";
 import { Label } from "./components/ui/label";
-import { Loader2, RefreshCw, Image as ImageIcon, Check, AlertCircle, Upload, X, Plus, Minus, LayoutTemplate, ArrowRight, Download, FileArchive, Settings2, DownloadCloud, ShieldAlert, Shirt, User, MapPin } from "lucide-react";
+import { Loader2, RefreshCw, Image as ImageIcon, Check, AlertCircle, Upload, X, Plus, Minus, LayoutTemplate, ArrowRight, Download, FileArchive, Settings2, DownloadCloud, ShieldAlert, Shirt, User, MapPin, Menu } from "lucide-react";
 import { Toaster } from "./components/ui/sonner";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
@@ -47,6 +47,14 @@ type AppState = "idle" | "analyzing" | "needs_improvement" | "planning" | "ready
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "custom";
 type Resolution = "original" | "720p" | "1080p" | "4k";
 
+const STORY_STYLES = [
+  { id: "Cinematic Realistic", label: "Cinematic Realistic", desc: "High-end 3D, natural lighting, realistic textures" },
+  { id: "3D Cartoon", label: "3D Cartoon", desc: "Pixar/Disney style, expressive, stylized proportions" },
+  { id: "Anime / Avatar", label: "Anime / Avatar", desc: "2D/3D Anime style, vibrant colors, stylized shading" },
+  { id: "Photorealistic Human", label: "Photorealistic Human", desc: "Live-action movie, real human actors, photographic" },
+  { id: "Stylized Mix", label: "Stylized Mix", desc: "Spider-Verse style, comic-book elements, mixed media" }
+];
+
 export default function App() {
   const [prompt, setPrompt] = useState("");
   const [sampleImage, setSampleImage] = useState<{ url: string; mimeType: string; data: string } | null>(null);
@@ -56,12 +64,18 @@ export default function App() {
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
   const [customAspectRatio, setCustomAspectRatio] = useState("21:9");
   const [resolution, setResolution] = useState<Resolution>("1080p");
+  const [storyStyle, setStoryStyle] = useState<string>("Cinematic Realistic");
+  const [directorStyle, setDirectorStyle] = useState<string>("Standard");
   const [appState, setAppState] = useState<AppState>("idle");
   const [isDownloading, setIsDownloading] = useState(false);
   const [skipAnalysisForCurrentPrompt, setSkipAnalysisForCurrentPrompt] = useState(false);
   const [regeneratingFrame, setRegeneratingFrame] = useState<{sceneIndex: number, frameIndex: number} | null>(null);
   const [selectedCamera, setSelectedCamera] = useState<string>("Default");
   const [selectedLighting, setSelectedLighting] = useState<string>("Default");
+  const [progress, setProgress] = useState(0);
+  const [loadingMessage, setLoadingMessage] = useState("");
+  const [sceneProgress, setSceneProgress] = useState<{ [key: number]: number }>({});
+  const [downloadProgress, setDownloadProgress] = useState(0);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgFileInputRef = useRef<HTMLInputElement>(null);
@@ -84,10 +98,21 @@ export default function App() {
   const [identifiedCharacters, setIdentifiedCharacters] = useState<Character[]>([]);
   const [selectedCharacters, setSelectedCharacters] = useState<string[]>([]);
   
+  const hasAllIngredients = (p: string) => {
+    const lower = p.toLowerCase();
+    const hasScenes = lower.includes("scene") || lower.includes("setting");
+    const hasCamera = lower.includes("camera") || lower.includes("angle") || lower.includes("lens");
+    const hasDirector = lower.includes("director") || lower.includes("note") || lower.includes("intent");
+    const hasLighting = lower.includes("lighting") || lower.includes("shadow") || lower.includes("mood");
+    return hasScenes && hasCamera && hasDirector && hasLighting;
+  };
+  
   const [storyboard, setStoryboard] = useState<{
     title: string;
+    storyTreatment?: string;
     storySummary: string;
     artStyle: string;
+    selectedStyle: string;
     ambience: string;
     characters: Character[];
     scenes: Scene[];
@@ -138,22 +163,45 @@ export default function App() {
       return;
     }
     
-    if (skipAnalysisForCurrentPrompt) {
+    if (skipAnalysisForCurrentPrompt || hasAllIngredients(prompt)) {
       setSkipAnalysisForCurrentPrompt(false);
       handlePlan(prompt, identifiedCharacters);
       return;
     }
-
+    
     setAppState("analyzing");
+    setProgress(0);
+    setLoadingMessage("Analyzing prompt quality...");
+    
+    const messages = [
+      "Analyzing prompt quality...",
+      "Identifying characters...",
+      "Checking for copyright compliance...",
+      "Evaluating narrative structure...",
+      "Finalizing analysis..."
+    ];
+    
+    let msgIdx = 0;
+    const msgInterval = setInterval(() => {
+      msgIdx = (msgIdx + 1) % messages.length;
+      setLoadingMessage(messages[msgIdx]);
+    }, 2000);
+
+    const progInterval = setInterval(() => {
+      setProgress(prev => prev >= 95 ? prev : prev + Math.random() * 2);
+    }, 300);
+
     try {
-      // Add a timeout to prevent hanging
       const analyzePromise = analyzePrompt(prompt, sampleImage);
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error("Analysis timed out. Please try again.")), 60000)
       );
       
       const result = await Promise.race([analyzePromise, timeoutPromise]) as any;
-      
+      clearInterval(msgInterval);
+      clearInterval(progInterval);
+      setProgress(100);
+
       if (!result) {
         throw new Error("Failed to parse analysis result.");
       }
@@ -193,6 +241,8 @@ export default function App() {
         setAppState("needs_improvement");
       }
     } catch (error: any) {
+      clearInterval(msgInterval);
+      clearInterval(progInterval);
       console.error(error);
       toast.error(error.message || "Failed to analyze prompt.");
       setAppState("idle");
@@ -215,14 +265,42 @@ export default function App() {
   const handlePlan = async (finalPrompt: string, charactersToUse: Character[] = identifiedCharacters) => {
     setPrompt(finalPrompt);
     setAppState("planning");
+    setProgress(0);
+    setLoadingMessage("Assembling pre-production team...");
+    
+    const messages = [
+      "Assembling pre-production team...",
+      "Script Writer finalizing narrative arc...",
+      "Director setting the story treatment...",
+      "Cinematographer planning camera angles...",
+      "Lighting Director designing the mood...",
+      "Costume Designer finalizing outfits...",
+      "Assistant Director coordinating scenes...",
+      "Production Designer building the set...",
+      "Finalizing production bible..."
+    ];
+    
+    let msgIdx = 0;
+    const msgInterval = setInterval(() => {
+      msgIdx = (msgIdx + 1) % messages.length;
+      setLoadingMessage(messages[msgIdx]);
+    }, 2500);
+
+    const progInterval = setInterval(() => {
+      setProgress(prev => prev >= 95 ? prev : prev + Math.random() * 3);
+    }, 400);
+
     try {
-      const planPromise = planStoryboard(finalPrompt, numScenes, framesPerScene, charactersToUse, sampleImage, backgroundReferenceImage);
+      const planPromise = planStoryboard(finalPrompt, numScenes, framesPerScene, charactersToUse, sampleImage, backgroundReferenceImage, storyStyle + " - Directed as " + directorStyle);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Storyboard planning timed out. Please try again.")), 60000)
+        setTimeout(() => reject(new Error("Storyboard planning timed out. Please try again.")), 120000)
       );
       
       const plan = await Promise.race([planPromise, timeoutPromise]) as any;
-      
+      clearInterval(msgInterval);
+      clearInterval(progInterval);
+      setProgress(100);
+
       const initialScenes: Scene[] = plan.scenes.map((scene: any) => ({
         ...scene,
         frames: scene.frames.map((f: any) => ({
@@ -233,8 +311,10 @@ export default function App() {
       
       setStoryboard({
         title: plan.title,
+        storyTreatment: plan.storyTreatment,
         storySummary: plan.storySummary,
         artStyle: plan.artStyle,
+        selectedStyle: storyStyle,
         ambience: plan.ambience || "Standard lighting and mood.",
         characters: plan.characters || [],
         scenes: initialScenes,
@@ -243,6 +323,8 @@ export default function App() {
       
       setAppState("ready");
     } catch (error: any) {
+      clearInterval(msgInterval);
+      clearInterval(progInterval);
       console.error(error);
       toast.error(error.message || "Failed to plan storyboard.");
       setAppState("idle");
@@ -267,14 +349,17 @@ export default function App() {
     const characterContext = storyboard.characters.map(c => `${c.name}: ${c.visualDescription}`).join(" | ");
 
     let firstFrameImage: { mimeType: string; data: string } | null = null;
+    const totalFrames = scene.frames.length;
+    setSceneProgress(prev => ({ ...prev, [sceneIndex]: 0 }));
 
     for (let frameIndex = 0; frameIndex < scene.frames.length; frameIndex++) {
       const frame = scene.frames[frameIndex];
       try {
-        const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style: High-end Cinematic Realism (Photorealistic textures, natural lighting). Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. No harsh digital gradients. Texture Constraint: Maintain a consistent "Subsurface Scattering" on skin and fur. Anti-Drift Rule: Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
-        const backgroundConsistency = `BACKGROUND CONSISTENCY: The background architecture, landscape, and object placement MUST remain EXACTLY the same as described in the Scene Setting. Do not move buildings, trees, or landmarks between frames. DO NOT hallucinate extra characters or objects.`;
+        const selectedStyleDetails = STORY_STYLES.find(s => s.id === storyboard.selectedStyle)?.desc || "";
+        const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style Directive: ${storyboard.selectedStyle}. Style Details: ${selectedStyleDetails}. Art Style Details: ${storyboard.artStyle}. Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. Texture Constraint: Maintain consistent textures appropriate for the chosen style. Anti-Drift Rule: Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
+        const backgroundConsistency = `BACKGROUND CONSISTENCY: The background architecture, landscape, and object placement MUST remain consistent with the Scene Setting. Ensure the characters are naturally integrated into this environment, with correct relative scale and interaction.`;
         const directorIntent = `DIRECTOR'S INTENT: Camera: ${frame.cameraIntent || "Professional cinematography"}. Lighting: ${frame.lightingIntent || "Cinematic lighting"}. Expression: ${frame.characterExpression || "Natural and story-aligned"}. Costume: ${frame.costumeDesign || "Consistent character attire"}. Cinematography: ${frame.cinematographyNotes || "Balanced composition"}.`;
-        const fullPrompt = `${styleManifest} ${backgroundConsistency} ${directorIntent} Art Style: ${storyboard.artStyle}. Ambience/Mood: ${storyboard.ambience}. Scene Setting: ${scene.setting}. Characters: ${characterContext}. Action: ${frame.imagePrompt}`;
+        const fullPrompt = `${styleManifest} ${backgroundConsistency} ${directorIntent} Ambience/Mood: ${storyboard.ambience}. Scene Setting: ${scene.setting}. Characters: ${characterContext}. Action: ${frame.imagePrompt}. [MANDATORY] Do NOT produce a 'pasted' look. Render the characters as part of the physical world.`;
         
         let referenceImage = sampleImage;
         let refType: "character" | "composition" | "scene_consistency" = "character";
@@ -284,7 +369,7 @@ export default function App() {
           refType = "scene_consistency";
         }
 
-        const generatePromise = generateFrameImage(fullPrompt, referenceImage, backgroundReferenceImage, apiRatio as any, refType);
+        const generatePromise = generateFrameImage(fullPrompt, referenceImage, backgroundReferenceImage, apiRatio as any, refType, storyboard.selectedStyle);
         const timeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error("Image generation timed out.")), 45000)
         );
@@ -307,6 +392,8 @@ export default function App() {
           return { ...prev, scenes: newScenes };
         });
         
+        setSceneProgress(prev => ({ ...prev, [sceneIndex]: ((frameIndex + 1) / totalFrames) * 100 }));
+        
         // Add a small delay between requests to help avoid rate limits
         if (frameIndex < scene.frames.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 2000));
@@ -323,6 +410,15 @@ export default function App() {
         });
       }
     }
+
+    // Clear progress after a delay
+    setTimeout(() => {
+      setSceneProgress(prev => {
+        const next = { ...prev };
+        delete next[sceneIndex];
+        return next;
+      });
+    }, 3000);
   };
 
   const handleRegenerateFrame = async (sceneIndex: number, frameIndex: number, cameraControl?: string, lightingControl?: string) => {
@@ -360,8 +456,10 @@ export default function App() {
     const costumeContext = frame.costumeDesign ? `Costume Design: ${frame.costumeDesign}. ` : "";
     const cinematographyContext = frame.cinematographyNotes ? `Cinematography Notes: ${frame.cinematographyNotes}. ` : "";
     
-    const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style: High-end Cinematic Realism (Photorealistic textures, natural lighting). Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. No harsh digital gradients. Texture Constraint: Maintain a consistent "Subsurface Scattering" on skin and fur. Anti-Drift Rule: Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
-    const fullPrompt = `${styleManifest} Art Style: ${storyboard.artStyle}. Ambience/Mood: ${storyboard.ambience}. Scene Setting: ${scene.setting}. Characters: ${characterContext}. ${cameraContext}${lightingContext}${expressionContext}${costumeContext}${cinematographyContext}Action: ${frame.imagePrompt}`;
+    const selectedStyleDetails = STORY_STYLES.find(s => s.id === storyboard.selectedStyle)?.desc || "";
+    const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style Directive: ${storyboard.selectedStyle}. Style Details: ${selectedStyleDetails}. Art Style Details: ${storyboard.artStyle}. Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. Texture Constraint: Maintain consistent textures appropriate for the chosen style. Anti-Drift Rule: Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
+    const integrationRule = '[MANDATORY] Do NOT produce a "pasted" look. Ensure the characters are integrated naturally into the environment with correct perspective and physical contact.';
+    const fullPrompt = `${styleManifest} Ambience/Mood: ${storyboard.ambience}. Scene Setting: ${scene.setting}. Characters: ${characterContext}. ${cameraContext}${lightingContext}${expressionContext}${costumeContext}${cinematographyContext}Action: ${frame.imagePrompt}. ${integrationRule}`;
 
     let referenceImage = sampleImage;
     let refType: "character" | "composition" = "character";
@@ -378,7 +476,7 @@ export default function App() {
     }
 
     try {
-      const generatePromise = generateFrameImage(fullPrompt, referenceImage, backgroundReferenceImage, apiRatio as any, refType);
+      const generatePromise = generateFrameImage(fullPrompt, referenceImage, backgroundReferenceImage, apiRatio as any, refType, storyboard.selectedStyle);
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error("Image generation timed out.")), 45000)
       );
@@ -425,10 +523,23 @@ export default function App() {
 
   const handleDownloadPDF = async () => {
     if (!storyboard) return;
+    const totalFrames = storyboard.scenes.reduce((acc, s) => acc + s.frames.length, 0);
+    const completedFrames = storyboard.scenes.reduce((acc, s) => acc + s.frames.filter(f => f.status === "completed").length, 0);
+    
+    if (completedFrames === 0) {
+      toast.error("No completed frames to include in PDF.");
+      return;
+    }
+
+    if (completedFrames < totalFrames) {
+      toast.warning(`Note: Only ${completedFrames} of ${totalFrames} frames are generated. The PDF will have missing images.`);
+    }
+
     try {
       setIsDownloading(true);
+      setDownloadProgress(0);
       toast.info("Preparing storyboard PDF file...");
-      const pdfBlob = await exportToPDF(storyboard, resolution, customAspectRatio);
+      const pdfBlob = await exportToPDF(storyboard, resolution, customAspectRatio, (p) => setDownloadProgress(p));
       downloadBlob(pdfBlob, `${storyboard.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-storyboard.pdf`);
       toast.success("Storyboard PDF downloaded successfully!");
     } catch (error) {
@@ -443,14 +554,20 @@ export default function App() {
     if (!storyboard) return;
     try {
       setIsDownloading(true);
+      setDownloadProgress(0);
       toast.info("Preparing storyboard ZIP file...");
       const files = [];
+      const total = storyboard.scenes.reduce((acc, s) => acc + s.frames.length, 0);
+      let count = 0;
+      
       for (const scene of storyboard.scenes) {
         for (const frame of scene.frames) {
           if (frame.imageUrl && frame.status === "completed") {
             const { blob } = await processImage(frame.imageUrl, resolution, customAspectRatio, "png");
             files.push({ name: `scene-${scene.sceneNumber}-frame-${String(frame.frameNumber).padStart(2, '0')}.png`, blob });
           }
+          count++;
+          setDownloadProgress((count / total) * 100);
         }
       }
       if (files.length === 0) {
@@ -489,6 +606,61 @@ export default function App() {
             </div>
             <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">StoryFrames</h1>
           </div>
+
+          <nav className="hidden md:flex items-center gap-1 ml-8">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => setAppState("idle")}
+              className={appState === "idle" ? "bg-zinc-100 text-indigo-600 font-semibold" : "text-zinc-500 hover:text-zinc-800"}
+            >
+              Idea
+            </Button>
+            {(analysis || suggestions.length > 0) && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => setAppState("needs_improvement")}
+                className={appState === "needs_improvement" ? "bg-zinc-100 text-indigo-600 font-semibold" : "text-zinc-500 hover:text-zinc-800"}
+              >
+                Analysis
+              </Button>
+            )}
+            {storyboard && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => setAppState("ready")}
+                className={appState === "ready" ? "bg-zinc-100 text-indigo-600 font-semibold" : "text-zinc-500 hover:text-zinc-800"}
+              >
+                Storyboard
+              </Button>
+            )}
+          </nav>
+
+          <div className="md:hidden ml-auto mr-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" />}>
+                <Menu className="w-5 h-5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={() => setAppState("idle")}>
+                  Idea
+                </DropdownMenuItem>
+                {(analysis || suggestions.length > 0) && (
+                  <DropdownMenuItem onClick={() => setAppState("needs_improvement")}>
+                    Analysis
+                  </DropdownMenuItem>
+                )}
+                {storyboard && (
+                  <DropdownMenuItem onClick={() => setAppState("ready")}>
+                    Storyboard
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
           <div className="flex items-center gap-3">
             {appState === "ready" && storyboard?.scenes.some(s => s.frames.some(f => f.status === "completed")) && (
               <>
@@ -653,7 +825,43 @@ export default function App() {
                     <p>Please avoid using copyrighted characters or franchises (e.g., Marvel, Disney). The system restricts generation of protected intellectual property and will adapt them into generic concepts.</p>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pt-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-6 pt-2">
+                    <div className="space-y-3">
+                      <Label className="text-sm font-semibold text-zinc-700">Art Style</Label>
+                      <Select value={storyStyle} onValueChange={setStoryStyle}>
+                        <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200">
+                          <SelectValue placeholder="Select style" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {STORY_STYLES.map(style => (
+                            <SelectItem key={style.id} value={style.id}>
+                              <div className="flex flex-col">
+                                <span>{style.label}</span>
+                                <span className="text-[10px] text-zinc-500">{style.desc}</span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-3">
+                      <Label className="text-sm font-semibold text-zinc-700">Director's Style</Label>
+                      <Select value={directorStyle} onValueChange={setDirectorStyle}>
+                        <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200">
+                          <SelectValue placeholder="Select director" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Standard">Standard Cinematic</SelectItem>
+                          <SelectItem value="Film Noir">Film Noir (Dark, Gritty)</SelectItem>
+                          <SelectItem value="Wes Anderson">Symmetrical & Pastel</SelectItem>
+                          <SelectItem value="Cyberpunk">Cyberpunk (Neon, Dystopian)</SelectItem>
+                          <SelectItem value="Epic Fantasy">Epic Fantasy (Sweeping)</SelectItem>
+                          <SelectItem value="Documentary">Raw Documentary</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
                     <div className="space-y-3">
                       <Label className="text-sm font-semibold text-zinc-700">Aspect Ratio</Label>
                       <Select value={aspectRatio} onValueChange={(v) => setAspectRatio(v as AspectRatio)}>
@@ -767,14 +975,68 @@ export default function App() {
           {appState === "analyzing" && (
             <motion.div 
               key="analyzing"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="flex flex-col items-center justify-center py-32 space-y-6"
+              initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="flex flex-col items-center justify-center py-24 space-y-10 max-w-lg mx-auto"
             >
-              <div className="relative">
-                <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 rounded-full animate-pulse" />
-                <Loader2 className="w-10 h-10 animate-spin text-indigo-600 relative z-10" />
+              <div className="relative group">
+                <div className="absolute inset-0 bg-indigo-500 blur-3xl opacity-30 rounded-full animate-pulse group-hover:opacity-40 transition-opacity" />
+                <div className="w-32 h-32 rounded-full border-8 border-indigo-50 border-t-indigo-600 animate-spin relative z-10 shadow-2xl shadow-indigo-200" />
+                <div className="absolute inset-0 flex items-center justify-center z-20">
+                  <div className="text-center">
+                    <span className="block text-2xl font-black text-indigo-700 tabular-nums">{Math.round(progress)}%</span>
+                  </div>
+                </div>
               </div>
-              <p className="text-zinc-600 font-medium text-lg">Analyzing prompt quality...</p>
+              <div className="space-y-6 w-full text-center px-4">
+                <div className="space-y-2">
+                  <h2 className="text-zinc-900 font-black text-3xl tracking-tight leading-none uppercase">Analysis Unit</h2>
+                  <p className="text-indigo-600/80 font-bold text-sm tracking-widest uppercase">{loadingMessage}</p>
+                </div>
+                <div className="w-full h-3 bg-zinc-100 rounded-full overflow-hidden border border-zinc-200 shadow-inner p-0.5">
+                  <motion.div 
+                    className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-600 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${progress}%` }}
+                    transition={{ type: "spring", bounce: 0, duration: 0.5 }}
+                  />
+                </div>
+                <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 shadow-sm inline-block">
+                  <p className="text-zinc-500 text-sm italic font-medium">"Our AI team is evaluating your story's potential and identifying key characters..."</p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {appState === "planning" && !storyboard && (
+            <motion.div 
+              key="planning-initial"
+              initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="flex flex-col items-center justify-center py-24 space-y-10 max-w-lg mx-auto"
+            >
+              <div className="relative group">
+                <div className="absolute inset-0 bg-purple-500 blur-3xl opacity-30 rounded-full animate-pulse group-hover:opacity-40 transition-opacity" />
+                <div className="w-32 h-32 rounded-full border-8 border-purple-50 border-t-purple-600 animate-spin relative z-10 shadow-2xl shadow-purple-200" />
+                <div className="absolute inset-0 flex items-center justify-center z-20">
+                  <LayoutTemplate className="w-10 h-10 text-purple-600 animate-pulse" />
+                </div>
+              </div>
+              <div className="space-y-6 w-full text-center px-4">
+                <div className="space-y-2">
+                  <h2 className="text-zinc-900 font-black text-3xl tracking-tight leading-none uppercase">Pre-Production</h2>
+                  <p className="text-purple-600/80 font-bold text-sm tracking-widest uppercase">{loadingMessage}</p>
+                </div>
+                <div className="w-full h-3 bg-zinc-100 rounded-full overflow-hidden border border-zinc-200 shadow-inner p-0.5">
+                  <motion.div 
+                    className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-purple-600 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${progress}%` }}
+                    transition={{ type: "spring", bounce: 0, duration: 0.5 }}
+                  />
+                </div>
+                <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 shadow-sm inline-block">
+                  <p className="text-zinc-500 text-sm italic font-medium">"Assembling the team: Script Writers, Directors, and Cinematographers are finalizing the production bible..."</p>
+                </div>
+              </div>
             </motion.div>
           )}
 
@@ -922,6 +1184,12 @@ export default function App() {
                 <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-full blur-3xl -z-10 transform translate-x-1/2 -translate-y-1/2" />
                 <h2 className="text-2xl font-bold tracking-tight mb-2 text-zinc-900">{storyboard.title}</h2>
                 <p className="text-zinc-600 mb-6 leading-relaxed">{storyboard.storySummary}</p>
+                {storyboard.storyTreatment && (
+                  <div className="mb-6 bg-amber-50 p-4 rounded-xl border border-amber-100">
+                    <span className="text-xs font-bold text-amber-700 uppercase tracking-wider block mb-1.5">Director's Treatment</span>
+                    <p className="text-amber-900 leading-relaxed italic">"{storyboard.storyTreatment}"</p>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
                   <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
                     <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider block mb-1.5">Art Style</span>
@@ -941,12 +1209,22 @@ export default function App() {
               </div>
 
               {appState === "planning" && (
-                <div className="flex flex-col items-center justify-center py-24 space-y-6">
+                <div className="flex flex-col items-center justify-center py-12 space-y-6 max-w-md mx-auto">
                   <div className="relative">
                     <div className="absolute inset-0 bg-purple-500 blur-xl opacity-20 rounded-full animate-pulse" />
-                    <LayoutTemplate className="w-10 h-10 animate-pulse text-purple-600 relative z-10" />
+                    <Loader2 className="w-12 h-12 text-purple-600 animate-spin" />
                   </div>
-                  <p className="text-zinc-600 font-medium text-lg">Planning scene compositions...</p>
+                  <div className="space-y-3 w-full text-center">
+                    <p className="text-zinc-800 font-bold text-lg">{loadingMessage}</p>
+                    <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden border border-zinc-200 p-px">
+                      <motion.div 
+                        className="h-full bg-purple-600 rounded-full"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${progress}%` }}
+                      />
+                    </div>
+                    <p className="text-zinc-400 text-xs italic uppercase tracking-tighter">Finalizing scene breakdowns...</p>
+                  </div>
                 </div>
               )}
 
@@ -961,12 +1239,22 @@ export default function App() {
                         {scene.frames.some(f => f.status === "pending" || f.status === "error") && (
                           <Button 
                             size="sm" 
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white relative overflow-hidden"
                             onClick={() => handleGenerateScene(sceneIndex)}
                             disabled={scene.frames.some(f => f.status === "generating")}
                           >
                             {scene.frames.some(f => f.status === "generating") ? (
-                              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...</>
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 
+                                {sceneProgress[sceneIndex] !== undefined ? `${Math.round(sceneProgress[sceneIndex])}%` : "Generating..."}
+                                {sceneProgress[sceneIndex] !== undefined && (
+                                  <motion.div 
+                                    className="absolute bottom-0 left-0 h-1 bg-white/30"
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${sceneProgress[sceneIndex]}%` }}
+                                  />
+                                )}
+                              </>
                             ) : (
                               <><ImageIcon className="w-4 h-4 mr-2" /> Generate Scene</>
                             )}
@@ -1140,6 +1428,38 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      <AnimatePresence>
+        {isDownloading && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-zinc-900/60 backdrop-blur-sm flex items-center justify-center p-6"
+          >
+            <Card className="w-full max-w-sm border-none shadow-2xl overflow-hidden">
+              <div className="bg-indigo-600 px-6 py-4 flex items-center gap-3">
+                <DownloadCloud className="w-5 h-5 text-white animate-bounce" />
+                <h3 className="text-white font-bold">Preparing Download</h3>
+              </div>
+              <CardContent className="p-6 space-y-4">
+                <div className="flex justify-between items-end mb-1">
+                  <span className="text-sm font-medium text-zinc-600">Processing images...</span>
+                  <span className="text-sm font-bold text-indigo-600">{Math.round(downloadProgress)}%</span>
+                </div>
+                <div className="w-full h-2 bg-zinc-100 rounded-full overflow-hidden border border-zinc-200">
+                  <motion.div 
+                    className="h-full bg-indigo-600"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${downloadProgress}%` }}
+                  />
+                </div>
+                <p className="text-xs text-zinc-500 text-center italic">Optimizing for {resolution} resolution...</p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <Dialog open={!!regeneratingFrame} onOpenChange={(open) => !open && setRegeneratingFrame(null)}>
         <DialogContent className="sm:max-w-[500px]">

@@ -113,7 +113,7 @@ export async function createZip(files: { name: string; blob: Blob }[]): Promise<
   return zip.generateAsync({ type: "blob" });
 }
 
-export async function exportToPDF(storyboard: any, resolution: "original" | "720p" | "1080p" | "4k", aspectRatio: string): Promise<Blob> {
+export async function exportToPDF(storyboard: any, resolution: "original" | "720p" | "1080p" | "4k", aspectRatio: string, onProgress?: (progress: number) => void): Promise<Blob> {
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
@@ -132,6 +132,9 @@ export async function exportToPDF(storyboard: any, resolution: "original" | "720
   doc.text(splitSummary, margin, 30);
   
   let yPos = 30 + (splitSummary.length * 6) + 10;
+
+  const totalFrames = storyboard.scenes.reduce((acc: number, s: any) => acc + s.frames.length, 0);
+  let processedCount = 0;
 
   for (let sIdx = 0; sIdx < storyboard.scenes.length; sIdx++) {
     const scene = storyboard.scenes[sIdx];
@@ -252,6 +255,8 @@ export async function exportToPDF(storyboard: any, resolution: "original" | "720
         doc.text("[Image not available]", margin, yPos);
         yPos += 10;
       }
+      processedCount++;
+      if (onProgress) onProgress((processedCount / totalFrames) * 100);
     }
     yPos += 10;
   }

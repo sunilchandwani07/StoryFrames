@@ -56,9 +56,10 @@ const cache = {
 };
 
 export async function analyzePrompt(prompt: string, image?: { mimeType: string; data: string } | null) {
-  const cacheKey = `analyze_${hashString(prompt + (image ? "with_image" : ""))}`;
-  const cached = cache.get(cacheKey);
-  if (cached) return cached;
+  return withRetry(async () => {
+    const cacheKey = `analyze_${hashString(prompt + (image ? "with_image" : ""))}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
 
   const contents: any[] = [
     {
@@ -172,6 +173,7 @@ Return the result as JSON.`
   const result = JSON.parse(text);
   cache.set(cacheKey, result);
   return result;
+  });
 }
 
 export async function planStoryboard(
@@ -180,11 +182,13 @@ export async function planStoryboard(
   framesPerScene: number, 
   existingCharacters: any[] = [], 
   image?: { mimeType: string; data: string } | null,
-  backgroundImage?: { mimeType: string; data: string } | null
+  backgroundImage?: { mimeType: string; data: string } | null,
+  userStylePreference: string = "Cinematic Realistic"
 ) {
-  const cacheKey = `plan_${hashString(prompt + numScenes + framesPerScene + JSON.stringify(existingCharacters) + (image ? "with_image" : "") + (backgroundImage ? "with_bg" : ""))}`;
-  const cached = cache.get(cacheKey);
-  if (cached) return cached;
+  return withRetry(async () => {
+    const cacheKey = `plan_${hashString(prompt + numScenes + framesPerScene + JSON.stringify(existingCharacters) + (image ? "with_image" : "") + (backgroundImage ? "with_bg" : "") + userStylePreference)}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
 
   const contents: any[] = [
     {
@@ -196,10 +200,12 @@ THE PRE-PRODUCTION TEAM:
 3. SCENE ANALYSER: Breaks down the technical requirements, continuity, and logical flow of each scene.
 4. DIRECTOR: Defines the overall vision, character expressions, and emotional beats.
 5. ASSISTANT DIRECTOR: Coordinates all units, ensuring the logic of the pre-production plan is sound.
-6. CINEMATOGRAPHER & CAMERAMAN: Chooses the precise camera angles, lens types (e.g., 35mm, 85mm), and framing.
-7. LIGHTING DIRECTOR: Designs the global and local lighting to enhance the mood (e.g., Rembrandt, high-key).
+6. CINEMATOGRAPHER & CAMERAMAN: Chooses the precise camera angles, lens types (e.g., 35mm, 85mm), and framing. CRITICAL: If both character and background references are provided, process them INDIVIDUALLY first. Determine the camera focus, depth of field, and angle required to SEAMLESSLY INTEGRATE the main character into the background environment. CRITICAL PROPORTION RULE: Maintain realistic character-to-environment proportions. Do not make the character unnaturally large or fill the entire frame unless it is a specific Extreme Close-Up. Ensure the environment is visible and provides context. DYNAMIC POSING RULE: Every frame must feature a unique, action-oriented pose for the characters. Never use static standing poses unless explicitly required by the script.
+7. LIGHTING DIRECTOR: Designs the global and local lighting to enhance the mood (e.g., Rembrandt, high-key). CRITICAL: Must analyze the background reference's native lighting and harmonize the character's lighting to match it perfectly, including rim lighting, contact shadows, and color temperature.
 8. COSTUME DESIGNER: Defines specific attire, fabrics, and accessories for character consistency.
-9. CHOREOGRAPHY/DANCE DIRECTOR: Plans movement, rhythm, and physical blocking for every frame.
+9. CHOREOGRAPHY/DANCE DIRECTOR: Plans movement, rhythm, and physical blocking for every frame. Ensure characters feel physically connected to the environment (e.g., feet touching the ground, interacting with objects).
+10. PRODUCTION DESIGNER & ART DIRECTOR: Analyzes the background reference to conceptualize the set design, architecture, and overall visual world. Ensure the set feels "lived-in" and interactive.
+11. SET DIRECTOR & DECORATOR: Fills the conceptualized set with appropriate props, textures, and atmospheric details.
 
 PROJECT PARAMETERS:
 Prompt (The Idea): "${prompt}"
@@ -209,20 +215,20 @@ Frames per Scene: ${framesPerScene}
 CRITICAL COPYRIGHT RULE: You MUST NOT use or reference copyrighted characters, franchises, or specific intellectual property. Adapt them into generic, original equivalents.
 
 ${image ? "CRITICAL: A character reference image has been provided. The team MUST use the characters from this image as the primary reference for identity and appearance." : ""}
-${backgroundImage ? "CRITICAL: A background reference image has been provided. The team MUST use the environment, architecture, and atmosphere from this image as the primary setting for the story." : ""}
+${backgroundImage ? "CRITICAL: A background reference image has been provided. The Production Designer, Set Director, Set Decorator, and Art Directors MUST use this image as a conceptual blueprint to visualize and construct the set. They must collaborate with the Cinematographer and Lighting Unit to integrate the character naturally into this environment before finalizing the scene." : ""}
 ${existingCharacters.length > 0 ? `Use these existing characters: ${existingCharacters.map(c => `${c.name} (${c.visualDescription})`).join(", ")}.` : ""}
 
 WORKFLOW:
-1. The Script Writer and Story Supervisor finalize the "idea" into a professional narrative arc.
+0. DIRECTOR'S TREATMENT: The Director and Script Writer analyze the core premise to determine the "Story Treatment" (e.g., emotion-driven, action-driven, character-study, world-building) and issue a unified directive to the entire team to ensure everyone is on the same page before processing frames.
+1. The Script Writer and Story Supervisor finalize the "idea" into a professional narrative arc based on the Treatment.
 2. The Scene Analyser and Assistant Director decompose the story into ${numScenes} logical scenes.
 3. The Costume Designer and Director define character looks and expressions.
 4. The Cinematographer, Lighting Director, and Choreography Director collaborate on every single frame (${framesPerScene} frames per scene).
 
 VISUAL STYLE MANIFEST:
-- Primary Style: High-end Cinematic Realism (Photorealistic textures, natural lighting).
-- Character Realism: Ensure all characters, including secondary ones, have realistic facial features, skin textures, and natural proportions. Avoid overly stylized or "plastic" looks.
-- Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows.
-- Texture Constraint: Consistent "Subsurface Scattering" on skin and fur.
+- Primary Style Directive: ${userStylePreference}. The Director and Art Director MUST strictly enforce this style across all frames.
+- Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows (unless overridden by the specific style).
+- Texture Constraint: Maintain consistent textures appropriate for the chosen style.
 - Anti-Drift Rule: Maintain depth, material gloss, and shadow softness.
 - Atmospheric Consistency: Constant 5% "Volume Fog".
 - Background Rule: Backgrounds must be clean and professional. NO text, NO logos, NO posters with writing. Replace any text-heavy backgrounds from reference images with clean, cinematic environments.
@@ -233,13 +239,13 @@ PRODUCTION BIBLE & CONTINUITY LOG:
 - If a character is introduced in Scene 1, their appearance must be perfectly preserved in Scene ${numScenes}.
 
 For each frame, provide:
-- Caption: 1-line description of the action.
-- Image Prompt: Detailed prompt for the image generator.
-- Camera Intent: Precise placement and lens choice.
-- Lighting Intent: Specific lighting setup for the frame.
-- Character Expression: Emotional state and facial cues.
-- Costume Design: Specific details about attire and accessories for this frame.
-- Cinematography Notes: Professional notes on composition, framing, and choreography.
+- Caption: 1-line description of the narrative action.
+- Image Prompt: Highly detailed prompt for the image generator. MUST describe physical orientation, body language, weight distribution, and concrete interaction with the environment (e.g., 'stumbling backward over loose rocks', 'leaning against a damp cave wall'). Avoid generic descriptions like 'looking in awe'.
+- Camera Intent: Precise placement, specific lens choice, and camera height/tilt. 
+- Lighting Intent: Specific lighting setup (e.g., 'harsh top-lighting creating deep eye sockets', 'backlit with a blue rim light').
+- Character Expression: Detailed emotional state including eyebrow position, mouth shape, and eye focus.
+- Costume Design: Specific state of attire for this frame (e.g., 'shirt slightly torn on left shoulder', 'boots caked in mud').
+- Cinematography Notes: Professional notes on composition using terms like 'Rule of Thirds', 'Leading Lines', 'Golden Ratio', and specific blocking instructions.
 
 Return the result as JSON.`
     }
@@ -272,6 +278,7 @@ Return the result as JSON.`
         type: Type.OBJECT,
         properties: {
           title: { type: Type.STRING },
+          storyTreatment: { type: Type.STRING, description: "The Director's unified directive (e.g., emotion-driven, action-driven, character-study) that guides the entire team's approach to the story." },
           storySummary: { type: Type.STRING },
           artStyle: { type: Type.STRING },
           ambience: { type: Type.STRING },
@@ -316,7 +323,7 @@ Return the result as JSON.`
             },
           },
         },
-        required: ["title", "storySummary", "artStyle", "ambience", "characters", "scenes"],
+        required: ["title", "storyTreatment", "storySummary", "artStyle", "ambience", "characters", "scenes"],
       },
     },
   });
@@ -329,68 +336,96 @@ Return the result as JSON.`
   const result = JSON.parse(text);
   cache.set(cacheKey, result);
   return result;
+  });
 }
+
+const withRetry = async <T>(fn: () => Promise<T>, retries: number = 3, delay: number = 5000): Promise<T> => {
+  try {
+    return await fn();
+  } catch (error: any) {
+    if (retries > 0 && (error?.message?.includes("429") || error?.message?.includes("RESOURCE_EXHAUSTED"))) {
+      console.warn(`Rate limit hit, retrying in ${delay / 1000} seconds... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return withRetry(fn, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+};
 
 export async function generateFrameImage(
   imagePrompt: string, 
   sampleImage?: { mimeType: string; data: string } | null,
   backgroundImage?: { mimeType: string; data: string } | null,
   aspectRatio: "16:9" | "9:16" | "1:1" = "16:9",
-  referenceType: "character" | "composition" | "scene_consistency" = "character"
+  referenceType: "character" | "composition" | "scene_consistency" = "character",
+  userStylePreference: string = "Cinematic Realistic"
 ) {
-  let referenceText = "";
-  if (sampleImage) {
-    if (referenceType === "composition") {
-      referenceText = "CRITICAL: Use the provided character image as a strict structural and composition reference. Maintain the EXACT SAME character poses and facial expressions. ";
+  return withRetry(async () => {
+    let referenceText = "";
+    const parts: any[] = [];
+
+    if (sampleImage) {
+      parts.push({ text: "[IMAGE 1: CHARACTER REFERENCE]" });
+      parts.push({
+        inlineData: {
+          data: sampleImage.data,
+          mimeType: sampleImage.mimeType,
+        },
+      });
+
+      if (referenceType === "composition") {
+        referenceText += "CRITICAL: Use [IMAGE 1] as a strict structural and composition reference. Maintain the EXACT SAME character poses and facial expressions. ";
+      } else if (referenceType === "scene_consistency") {
+        referenceText += "CRITICAL: Use [IMAGE 1] as a consistency reference for the environment, lighting, and character identity. However, YOU MUST change the character's pose, expression, and position to match the new action described in the prompt. Do not replicate the exact composition of [IMAGE 1]. ";
+      } else {
+        referenceText += "CRITICAL: Use [IMAGE 1] as a strict visual reference for the MAIN character's identity, facial features, and clothing. ANTI-CLONING RULE: If there are multiple distinct characters in the scene, DO NOT apply the main character's face to everyone. Maintain distinct identities, body types, and specific props (like glasses or mustaches) for each unique character as described in the prompt. UNIFORM INTEGRATION: Ensure the character is naturally rendered into the scene with matching lighting and shadows. ";
+      }
+    }
+
+    if (backgroundImage) {
+      parts.push({ text: "[IMAGE 2: BACKGROUND REFERENCE]" });
+      parts.push({
+        inlineData: {
+          data: backgroundImage.data,
+          mimeType: backgroundImage.mimeType,
+        },
+      });
+
+      referenceText += "CRITICAL: Use [IMAGE 2] as a conceptual blueprint and set design reference for the environment. The Production Designer, Set Decorator, and Art Directors have used this to build the set. The background should capture the essence, architecture, and atmosphere of [IMAGE 2], allowing the Cinematographer and Lighting Unit to dynamically frame and light the scene. DO NOT pull character identities or faces from [IMAGE 2]. If [IMAGE 2] contains a crowd or people, treat them as generic, out-of-focus background extras, NOT the main character. INTEGRATION RULE: The character must NOT look like they are 'pasted' or 'overlayed' on [IMAGE 2]. They must be part of the world, with shadows cast on the floor, ambient light reflecting on their skin/clothes, and a consistent depth of field that matches the lens choice. ";
+    }
+
+    let styleRule = "";
+    if (userStylePreference === "Photorealistic Human") {
+      styleRule = "[STYLIZATION RULE] CRITICAL: The user has requested 'Photorealistic Human'. You MUST generate a live-action, highly detailed photographic image. Use 8k resolution, raw photography feel, ultra-realistic skin textures, and cinematic color grading. DO NOT generate an illustration, painting, or 3D render.";
+    } else if (userStylePreference === "3D Cartoon") {
+      styleRule = "[STYLIZATION RULE] CRITICAL: The user has requested '3D Cartoon'. Generate an image that looks like a frame from a high-budget 3D animated film (e.g., Pixar, Disney). Use stylized proportions, vibrant lighting, subsurface scattering on skin, and soft depth of field.";
     } else {
-      referenceText = "CRITICAL: Use the provided character image as a strict visual reference for character identity, facial features, and clothing. ";
+      styleRule = `[STYLIZATION RULE] CRITICAL: Adhere strictly to the requested style: ${userStylePreference}. Preserve the character's core identity and adapt it cleanly to this style without uncanny valley fusion. Keep the visual tone cohesive.`;
     }
-  }
 
-  if (backgroundImage) {
-    referenceText += "CRITICAL: Use the provided background image as the EXCLUSIVE reference for the environment, architecture, and setting. The background in the generated image MUST be an identical match to the provided background image. ";
-  }
+    const negativePrompt = `[NEGATIVE RULES - AVOID THESE AT ALL COSTS] NO text, NO watermarks, NO signatures, NO logos, NO ui elements, NO blurry elements, NO deformed anatomy, NO extra fingers, NO poorly drawn faces, NO duplicate characters, NO out of frame elements, NO unnatural lighting, NO washed out colors, NO pasted overlays.`;
 
-  const parts: any[] = [
-    {
-      text: referenceText + imagePrompt + " [QUALITY RULES] Professional cinematic grade output. Photorealistic textures. Natural skin pores and hair detail. NO uncanny valley stylization. [CLEANLINESS RULES] ABSOLUTELY NO text, NO logos, NO posters with writing, NO watermarks, NO signatures, and NO text-based branding in the background. If the reference images have posters or text, you MUST replace them with clean, architectural walls or generic artistic backgrounds without any characters or words. [CONSISTENCY RULES] Maintain the exact jawline, facial anatomy, and body structure of the characters as established in the character reference. Only change their emotional expressions and poses as directed. CRITICAL: Strictly adhere to any camera angles, lighting, or lens attributes specified in the prompt.",
-    },
-  ];
+    parts.push({
+      text: referenceText + imagePrompt + ` [QUALITY RULES] Professional cinematic grade output. High-end rendering with cinematic lighting. ${styleRule} ${negativePrompt} [CLEANLINESS RULES] ABSOLUTELY NO text, NO logos, NO posters with writing, NO watermarks, NO signatures, and NO text-based branding. Replace any text-heavy backgrounds with clean, architectural walls or generic artistic environments. [CONSISTENCY RULES] Maintain exact jawline, facial anatomy, and body structure. Only change emotional expressions and poses as directed. CRITICAL: Strictly adhere to any camera angles, lighting, or lens attributes specified in the prompt. Apply constant volumetric lighting.`,
+    });
 
-  if (sampleImage) {
-    parts.unshift({
-      inlineData: {
-        data: sampleImage.data,
-        mimeType: sampleImage.mimeType,
+    const response = await getAI().models.generateContent({
+      model: "gemini-2.5-flash-image",
+      contents: {
+        parts,
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: aspectRatio,
+        },
       },
     });
-  }
 
-  if (backgroundImage) {
-    parts.unshift({
-      inlineData: {
-        data: backgroundImage.data,
-        mimeType: backgroundImage.mimeType,
-      },
-    });
-  }
-
-  const response = await getAI().models.generateContent({
-    model: "gemini-2.5-flash-image",
-    contents: {
-      parts,
-    },
-    config: {
-      imageConfig: {
-        aspectRatio: aspectRatio,
-      },
-    },
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+      }
+    }
+    throw new Error("Failed to generate image.");
   });
-
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-    }
-  }
-  throw new Error("Failed to generate image.");
 }
