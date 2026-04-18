@@ -198,14 +198,15 @@ THE PRE-PRODUCTION TEAM:
 1. SCRIPT WRITER: Finalizes the user's initial idea into a professional screenplay structure, ensuring narrative depth and pacing.
 2. STORY SUPERVISOR: Ensures the narrative arc is tight, emotionally resonant, and strictly follows the finalized script.
 3. SCENE ANALYSER: Breaks down the technical requirements, continuity, and logical flow of each scene.
-4. DIRECTOR: Defines the overall vision, character expressions, and emotional beats.
+4. DIRECTOR: Defines the overall vision, character expressions, and emotional beats. Coordination of physical emotional markers like redness in eyes, pupil dilation, and tense facial muscles.
 5. ASSISTANT DIRECTOR: Coordinates all units, ensuring the logic of the pre-production plan is sound.
 6. CINEMATOGRAPHER & CAMERAMAN: Chooses the precise camera angles, lens types (e.g., 35mm, 85mm), and framing. CRITICAL: If both character and background references are provided, process them INDIVIDUALLY first. Determine the camera focus, depth of field, and angle required to SEAMLESSLY INTEGRATE the main character into the background environment. CRITICAL PROPORTION RULE: Maintain realistic character-to-environment proportions. Do not make the character unnaturally large or fill the entire frame unless it is a specific Extreme Close-Up. Ensure the environment is visible and provides context. DYNAMIC POSING RULE: Every frame must feature a unique, action-oriented pose for the characters. Never use static standing poses unless explicitly required by the script.
 7. LIGHTING DIRECTOR: Designs the global and local lighting to enhance the mood (e.g., Rembrandt, high-key). CRITICAL: Must analyze the background reference's native lighting and harmonize the character's lighting to match it perfectly, including rim lighting, contact shadows, and color temperature.
-8. COSTUME DESIGNER: Defines specific attire, fabrics, and accessories for character consistency.
-9. CHOREOGRAPHY/DANCE DIRECTOR: Plans movement, rhythm, and physical blocking for every frame. Ensure characters feel physically connected to the environment (e.g., feet touching the ground, interacting with objects).
-10. PRODUCTION DESIGNER & ART DIRECTOR: Analyzes the background reference to conceptualize the set design, architecture, and overall visual world. Ensure the set feels "lived-in" and interactive.
-11. SET DIRECTOR & DECORATOR: Fills the conceptualized set with appropriate props, textures, and atmospheric details.
+8. COSTUME DESIGNER: Defines specific attire, fabrics, and accessories for character consistency. CRITICAL: The Costume Designer must provide granular details on practical wear-and-tear, including wrinkles, dirt, mud, sweat marks, misalignment of buttons, and fabric distressing. This "Distressing Profile" must strictly match the character's emotional state and physical history in the story (e.g., a character experiencing high stress or physical struggle should have sweat-soaked collars, disheveled sleeves, and torn seams; a character in a chase should have layers of mud and grime that match the environment).
+9. MAKEUP & HAIR DIRECTOR: Designs and maintains the character's physical state. CRITICAL: Must specify details like sweat levels (glisten, beads, soaked), scratches/lacerations, muddy or grimy skin, dirt under nails, and disturbed/wind-blown/matted hair. These details must evolve logically with the scene's intensity.
+10. CHOREOGRAPHY/DANCE DIRECTOR: Plans movement, rhythm, and physical blocking for every frame. Ensure characters feel physically connected to the environment (e.g., feet touching the ground, interacting with objects).
+11. PRODUCTION DESIGNER & ART DIRECTOR: Analyzes the background reference to conceptualize the set design, architecture, and overall visual world. Ensure the set feels "lived-in" and interactive.
+12. SET DIRECTOR & DECORATOR: Fills the conceptualized set with appropriate props, textures, and atmospheric details.
 
 PROJECT PARAMETERS:
 Prompt (The Idea): "${prompt}"
@@ -243,8 +244,9 @@ For each frame, provide:
 - Image Prompt: Highly detailed prompt for the image generator. MUST describe physical orientation, body language, weight distribution, and concrete interaction with the environment (e.g., 'stumbling backward over loose rocks', 'leaning against a damp cave wall'). Avoid generic descriptions like 'looking in awe'.
 - Camera Intent: Precise placement, specific lens choice, and camera height/tilt. 
 - Lighting Intent: Specific lighting setup (e.g., 'harsh top-lighting creating deep eye sockets', 'backlit with a blue rim light').
-- Character Expression: Detailed emotional state including eyebrow position, mouth shape, and eye focus.
-- Costume Design: Specific state of attire for this frame (e.g., 'shirt slightly torn on left shoulder', 'boots caked in mud').
+- Character Expression: Detailed emotional state including eyebrow position, mouth shape, and eye focus. Explicitly mention physical signs like redness in eyes or dilated pupils if narrative-appropriate.
+- Makeup & Hair Detail: Specific physical state markers (e.g., 'sweat beads glistening on forehead', 'fresh red scratch across right cheek', 'hair matted with dirt and sweat', 'grime visible under finger nails').
+- Costume Design: Exhaustive description of the state of attire. Must specify wrinkles, sweat patches (underarms, chest, back), dirt/mud placement, button misalignment, and specific fabric wear (e.g., 'heavy sweat soaked through the charcoal suit jacket', 'left sleeve torn with visible fraying', 'clay-colored mud coating the knees of denim jeans'). Ensure the level of disarray or sharpness matches the character's current emotion and the scene's intensity.
 - Cinematography Notes: Professional notes on composition using terms like 'Rule of Thirds', 'Leading Lines', 'Golden Ratio', and specific blocking instructions.
 
 Return the result as JSON.`
@@ -312,10 +314,11 @@ Return the result as JSON.`
                       cameraIntent: { type: Type.STRING },
                       lightingIntent: { type: Type.STRING },
                       characterExpression: { type: Type.STRING },
+                      makeupAndHairDetail: { type: Type.STRING },
                       costumeDesign: { type: Type.STRING },
                       cinematographyNotes: { type: Type.STRING },
                     },
-                    required: ["frameNumber", "caption", "imagePrompt", "cameraIntent", "lightingIntent", "characterExpression", "costumeDesign", "cinematographyNotes"],
+                    required: ["frameNumber", "caption", "imagePrompt", "cameraIntent", "lightingIntent", "characterExpression", "makeupAndHairDetail", "costumeDesign", "cinematographyNotes"],
                   },
                 },
               },
@@ -406,7 +409,7 @@ export async function generateFrameImage(
     const negativePrompt = `[NEGATIVE RULES - AVOID THESE AT ALL COSTS] NO text, NO watermarks, NO signatures, NO logos, NO ui elements, NO blurry elements, NO deformed anatomy, NO extra fingers, NO poorly drawn faces, NO duplicate characters, NO out of frame elements, NO unnatural lighting, NO washed out colors, NO pasted overlays.`;
 
     parts.push({
-      text: referenceText + imagePrompt + ` [QUALITY RULES] Professional cinematic grade output. High-end rendering with cinematic lighting. ${styleRule} ${negativePrompt} [CLEANLINESS RULES] ABSOLUTELY NO text, NO logos, NO posters with writing, NO watermarks, NO signatures, and NO text-based branding. Replace any text-heavy backgrounds with clean, architectural walls or generic artistic environments. [CONSISTENCY RULES] Maintain exact jawline, facial anatomy, and body structure. Only change emotional expressions and poses as directed. CRITICAL: Strictly adhere to any camera angles, lighting, or lens attributes specified in the prompt. Apply constant volumetric lighting.`,
+      text: referenceText + imagePrompt + ` [QUALITY RULES] Professional cinematic grade output. High-end rendering with cinematic lighting. ${styleRule} ${negativePrompt} [CLEANLINESS RULES] ABSOLUTELY NO text, NO logos, NO posters with writing, NO watermarks, NO signatures, and NO text-based branding. Replace any text-heavy backgrounds with clean, architectural walls or generic artistic environments. [CONSISTENCY RULES] Maintain exact jawline, facial anatomy, and body structure. Only change emotional expressions and poses as directed. CRITICAL: Strictly adhere to all details in the prompt, especially COSTUME DISTRESSING (wrinkles, sweat, dirt, mud, wear and tear) and MAKEUP/HAIR DETAILS (sweat beads, scratches, eye redness, disheveled hair). These details are narrative-critical. Apply constant volumetric lighting.`,
     });
 
     const response = await getAI().models.generateContent({
