@@ -16,16 +16,23 @@ import {
   AlertCircle,
   Upload,
   X,
+  Play,
+  Pause,
   Plus,
   Minus,
   LayoutTemplate,
+  MessageSquare,
+  Video,
   ArrowRight,
   Download,
   FileArchive,
+  FileSpreadsheet,
   Settings2,
   DownloadCloud,
   ShieldAlert,
   Shirt,
+  Layout,
+  MonitorStop,
   User,
   MapPin,
   Menu,
@@ -65,11 +72,13 @@ import {
   processImage,
   downloadBlob,
   createZip,
+  exportToCSV,
   exportToPDF,
 } from "./lib/imageUtils";
 type Frame = {
   frameNumber: number;
   caption: string;
+  narrativeBeat?: string;
   imagePrompt: string;
   cameraIntent?: string;
   lightingIntent?: string;
@@ -77,6 +86,7 @@ type Frame = {
   makeupAndHairDetail?: string;
   costumeDesign?: string;
   cinematographyNotes?: string;
+  sceneDirectorNotes?: string;
   imageUrl?: string;
   status: "pending" | "generating" | "completed" | "error";
   errorMessage?: string;
@@ -126,6 +136,8 @@ const STORY_STYLES = [
   },
 ];
 export default function App() {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [sampleImage, setSampleImage] = useState<{
     url: string;
@@ -146,6 +158,9 @@ export default function App() {
   const [directorStyle, setDirectorStyle] = useState<string>("Standard");
   const [appState, setAppState] = useState<AppState>("idle");
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [currentPreviewFrameIndex, setCurrentPreviewFrameIndex] = useState(0);
+  const [previewPlaying, setPreviewPlaying] = useState(true);
   const [skipAnalysisForCurrentPrompt, setSkipAnalysisForCurrentPrompt] =
     useState(false);
   const [regeneratingFrame, setRegeneratingFrame] = useState<{
@@ -162,8 +177,15 @@ export default function App() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgFileInputRef = useRef<HTMLInputElement>(null);
+
   const [suggestions, setSuggestions] = useState<
-    { prompt: string; explanation: string }[]
+    {
+      prompt: string;
+      explanation: string;
+      scenes: number;
+      framesPerScene: number;
+      characters: string[];
+    }[]
   >([]);
   const [suggestedFrames, setSuggestedFrames] = useState<number | null>(null);
   const [suggestedScenesCount, setSuggestedScenesCount] = useState<
@@ -214,6 +236,27 @@ export default function App() {
     scenes: Scene[];
     aspectRatio: AspectRatio;
   } | null>(null);
+
+  const allCompletedFrames = React.useMemo(() => {
+    if (!storyboard) return [];
+    return storyboard.scenes.flatMap((scene) => 
+      scene.frames
+        .filter((f) => f.status === "completed" && f.imageUrl)
+        .map(f => ({ ...f, sceneSetting: scene.setting }))
+    );
+  }, [storyboard]);
+
+  React.useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isPreviewOpen && previewPlaying && allCompletedFrames.length > 0) {
+      interval = setInterval(() => {
+        setCurrentPreviewFrameIndex((prev) => 
+          (prev + 1) % allCompletedFrames.length
+        );
+      }, 3000); // 3 seconds per frame
+    }
+    return () => clearInterval(interval);
+  }, [isPreviewOpen, previewPlaying, allCompletedFrames.length]);
   const handleImageUpload = (
     e: React.ChangeEvent<HTMLInputElement>,
     type: "character" | "background",
@@ -277,14 +320,18 @@ export default function App() {
       setLoadingMessage(messages[msgIdx]);
     }, 2000);
     const progInterval = setInterval(() => {
-      setProgress((prev) => (prev >= 95 ? prev : prev + Math.random() * 2));
+      setProgress((prev) => {
+        const remaining = 99 - prev;
+        const increment = Math.max(0.15, remaining * 0.05 * Math.random());
+        return prev < 99 ? prev + increment : 99;
+      });
     }, 300);
     try {
       const analyzePromise = analyzePrompt(prompt, sampleImage);
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(
           () => reject(new Error("Analysis timed out. Please try again.")),
-          60000,
+          300000,
         ),
       );
       const result = (await Promise.race([
@@ -386,7 +433,11 @@ export default function App() {
       setLoadingMessage(messages[msgIdx]);
     }, 2500);
     const progInterval = setInterval(() => {
-      setProgress((prev) => (prev >= 95 ? prev : prev + Math.random() * 3));
+      setProgress((prev) => {
+        const remaining = 99 - prev;
+        const increment = Math.max(0.15, remaining * 0.04 * Math.random());
+        return prev < 99 ? prev + increment : 99;
+      });
     }, 400);
     try {
       const planPromise = planStoryboard(
@@ -404,7 +455,7 @@ export default function App() {
             reject(
               new Error("Storyboard planning timed out. Please try again."),
             ),
-          120000,
+          600000,
         ),
       );
       const plan = (await Promise.race([planPromise, timeoutPromise])) as any;
@@ -458,6 +509,22 @@ export default function App() {
     const characterContext = storyboard.characters
       .map((c) => `${c.name}: ${c.visualDescription}`)
       .join(" | ");
+    // Sequential Bridge Consistency: Try to find the last image of the previous scene to serve as the visual "Bridge"
+    let bridgeImage: { mimeType: string; data: string } | null = null;
+    if (sceneIndex > 0) {
+      const prevScene = storyboard.scenes[sceneIndex - 1];
+      for (let i = prevScene.frames.length - 1; i >= 0; i--) {
+        const lastImg = prevScene.frames[i].imageUrl;
+        if (lastImg) {
+          const match = lastImg.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+          if (match) {
+            bridgeImage = { mimeType: match[1], data: match[2] };
+            break;
+          }
+        }
+      }
+    }
+
     let firstFrameImage: { mimeType: string; data: string } | null = null;
     const totalFrames = scene.frames.length;
     setSceneProgress((prev) => ({ ...prev, [sceneIndex]: 0 }));
@@ -467,17 +534,21 @@ export default function App() {
         const selectedStyleDetails =
           STORY_STYLES.find((s) => s.id === storyboard.selectedStyle)?.desc ||
           "";
-        const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style Directive: ${storyboard.selectedStyle}. Style Details: ${selectedStyleDetails}. Art Style Details: ${storyboard.artStyle}. Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. Texture Constraint: Maintain consistent textures appropriate for the chosen style. Anti-Drift Rule: Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
-        const backgroundConsistency = `BACKGROUND CONSISTENCY: The background architecture, landscape, and object placement MUST remain consistent with the Scene Setting. Ensure the characters are naturally integrated into this environment, with correct relative scale and interaction.`;
-        const directorIntent = `DIRECTOR'S INTENT: Camera: ${frame.cameraIntent || "Professional cinematography"}. Lighting: ${frame.lightingIntent || "Cinematic lighting"}. Expression: ${frame.characterExpression || "Natural and story-aligned"}. Costume: ${frame.costumeDesign || "Consistent character attire"}. Cinematography: ${frame.cinematographyNotes || "Balanced composition"}.`;
-        const fullPrompt = `${styleManifest} ${backgroundConsistency} ${directorIntent} Ambience/Mood: ${storyboard.ambience}. Scene Setting: ${scene.setting}. Characters: ${characterContext}. Action: ${frame.imagePrompt}. [MANDATORY] Do NOT produce a 'pasted' look. Render the characters as part of the physical world.`;
+        
+        // Removed hardcoded 'Global warm sunlight' that was killing emotional mood. 
+        // We now rely purely on the Director's output from the planning phase for lighting/mood.
+        const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style Directive: ${storyboard.selectedStyle}. Style Details: ${selectedStyleDetails}. Art Style Details: ${storyboard.artStyle}.`;
+        const backgroundConsistency = `BACKGROUND CONSISTENCY: The background architecture, landscape, and object placement MUST remain consistent with the Scene Setting.`;
+        const directorIntent = `[MANDATORY DIRECTOR'S INSTRUCTIONS] You MUST follow these to the letter:\n- Camera Intent: ${frame.cameraIntent || "Professional cinematography"}\n- Lighting: ${frame.lightingIntent || "Cinematic lighting"}\n- Character Expression: ${frame.characterExpression || "Natural and story-aligned"}\n- Costume Design: ${frame.costumeDesign || "Consistent character attire"}\n- Cinematography Notes: ${frame.cinematographyNotes || "Balanced composition"}`;
+        const narrativeTimingRule = `CRITICAL NARRATIVE TIMING: Render EXACTLY what is happening in the current Action. Do NOT jump ahead in the plot or add elements from the overall Ambience if they conflict with the peacefulness or specificity of the current frame.`;
+        const microPhysicsRule = `[REALITY ENGINE ACTIVE] Apply Micro-Physics & Imperfection: Force organic camera drift (1-3° tilt), asymmetric framing, and atmospheric chaos (dust/haze). Subtly render secondary reactions (fabric tension, skin compression) without altering the Director's composition. Eliminate AI perfection.`;
+        const fullPrompt = `${styleManifest}\n${backgroundConsistency}\n\n${directorIntent}\n\nAmbience/Mood: ${storyboard.ambience}.\nScene Setting: ${scene.setting}.\nCharacters: ${characterContext}.\n\nPrimary Action to Render: ${frame.imagePrompt}.\n\n${narrativeTimingRule}\n${microPhysicsRule}\n[MANDATORY CINEMATOGRAPHY & REALISM CHECK] Ensure atmospheric matching. The environment MUST NOT be static. Include reactive environmental storytelling: dynamic dust, debris, fog, or focus blur.`;
+        
+        // ALWAYS use the user's original sampleImage to maintain absolute 100% identity lock.
+        // Replacing it with generated frames causes rapid genetic drift across scenes.
         let referenceImage = sampleImage;
-        let refType: "character" | "composition" | "scene_consistency" =
-          "character";
-        if (frameIndex > 0 && firstFrameImage) {
-          referenceImage = firstFrameImage;
-          refType = "scene_consistency";
-        }
+        let refType: "character" | "composition" | "scene_consistency" = "character";
+
         const generatePromise = generateFrameImage(
           fullPrompt,
           referenceImage,
@@ -489,7 +560,7 @@ export default function App() {
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(
             () => reject(new Error("Image generation timed out.")),
-            45000,
+            120000,
           ),
         );
         const imageUrl = (await Promise.race([
@@ -616,21 +687,21 @@ export default function App() {
       : "";
     const selectedStyleDetails =
       STORY_STYLES.find((s) => s.id === storyboard.selectedStyle)?.desc || "";
-    const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style Directive: ${storyboard.selectedStyle}. Style Details: ${selectedStyleDetails}. Art Style Details: ${storyboard.artStyle}. Lighting Model: Global warm sunlight (5500K) with soft ray-traced shadows. Texture Constraint: Maintain consistent textures appropriate for the chosen style. Anti-Drift Rule: Every frame must maintain the depth, material gloss, and shadow softness established in Scene 1. Atmospheric Consistency: Apply a constant 5% "Volume Fog" to harmonize the foreground and background light.`;
-    const integrationRule =
-      '[MANDATORY] Do NOT produce a "pasted" look. Ensure the characters are integrated naturally into the environment with correct perspective and physical contact.';
-    const fullPrompt = `${styleManifest} Ambience/Mood: ${storyboard.ambience}. Scene Setting: ${scene.setting}. Characters: ${characterContext}. ${cameraContext}${lightingContext}${expressionContext}${costumeContext}${cinematographyContext}Action: ${frame.imagePrompt}. ${integrationRule}`;
+      
+    // Removed hardcoded 'Global warm sunlight' that was killing emotional mood during regeneration.
+    const styleManifest = `[VISUAL STYLE MANIFEST] Primary Style Directive: ${storyboard.selectedStyle}. Style Details: ${selectedStyleDetails}. Art Style Details: ${storyboard.artStyle}.`;
+    
+    const directorIntent = `[MANDATORY DIRECTOR'S INSTRUCTIONS] You MUST follow these to the letter:\n- ${cameraContext}\n- ${lightingContext}\n- ${expressionContext}\n- ${costumeContext}\n- ${cinematographyContext}`;
+    const narrativeTimingRule = `CRITICAL NARRATIVE TIMING: Render EXACTLY what is happening in the current Action. Do NOT jump ahead in the plot or add elements from the overall Ambience if they conflict with the current frame.`;
+    const microPhysicsRule = `[REALITY ENGINE ACTIVE] Apply Micro-Physics & Imperfection: Force organic camera drift (1-3° tilt), asymmetric framing, and atmospheric chaos (dust/haze). Subtly render secondary reactions (fabric tension, skin compression) without altering the Director's composition. Eliminate AI perfection.`;
+    const integrationRule = '[MANDATORY CINEMATOGRAPHY & REALISM CHECK] Generate a cinematic frame with authentic lens interaction, depth of field, and ambient atmosphere reflecting the emotional mood. No plastic AI rendering.';
+    
+    const fullPrompt = `${styleManifest}\n\nAmbience/Mood: ${storyboard.ambience}.\nScene Setting: ${scene.setting}.\nCharacters: ${characterContext}.\n\n${directorIntent}\n\nPrimary Action to Render: ${frame.imagePrompt}.\n\n${narrativeTimingRule}\n${microPhysicsRule}\n${integrationRule}`;
+    
+    // ALWAYS pull identity from the pristine sampleImage to fix character drift on regeneration
     let referenceImage = sampleImage;
     let refType: "character" | "composition" = "character";
-    if (currentFrame.imageUrl) {
-      const match = currentFrame.imageUrl.match(
-        /^data:(image\/[a-zA-Z+]+);base64,(.+)$/,
-      );
-      if (match) {
-        referenceImage = { mimeType: match[1], data: match[2] };
-        refType = "composition";
-      }
-    }
+    
     try {
       const generatePromise = generateFrameImage(
         fullPrompt,
@@ -643,7 +714,7 @@ export default function App() {
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(
           () => reject(new Error("Image generation timed out.")),
-          45000,
+          120000,
         ),
       );
       const imageUrl = (await Promise.race([
@@ -687,10 +758,11 @@ export default function App() {
     try {
       setIsDownloading(true);
       toast.info(`Preparing frame ${frame.frameNumber} for download...`);
+      const exportRatio = aspectRatio === "custom" ? customAspectRatio : aspectRatio;
       const { blob } = await processImage(
         frame.imageUrl,
         resolution,
-        customAspectRatio,
+        exportRatio,
         format,
       );
       downloadBlob(blob, `storyboard-frame-${frame.frameNumber}.${format}`);
@@ -725,10 +797,17 @@ export default function App() {
       setIsDownloading(true);
       setDownloadProgress(0);
       toast.info("Preparing storyboard PDF file...");
+      const exportRatio = aspectRatio === "custom" ? customAspectRatio : aspectRatio;
       const pdfBlob = await exportToPDF(
         storyboard,
+        {
+          originalPrompt: prompt,
+          hasCharacterReference: !!sampleImage,
+          hasBackgroundReference: !!backgroundReferenceImage,
+          selectedStyle: storyboard.selectedStyle
+        },
         resolution,
-        customAspectRatio,
+        exportRatio,
         (p) => setDownloadProgress(p),
       );
       downloadBlob(
@@ -755,13 +834,14 @@ export default function App() {
         0,
       );
       let count = 0;
+      const exportRatio = aspectRatio === "custom" ? customAspectRatio : aspectRatio;
       for (const scene of storyboard.scenes) {
         for (const frame of scene.frames) {
           if (frame.imageUrl && frame.status === "completed") {
             const { blob } = await processImage(
               frame.imageUrl,
               resolution,
-              customAspectRatio,
+              exportRatio,
               "png",
             );
             files.push({
@@ -790,6 +870,24 @@ export default function App() {
       setIsDownloading(false);
     }
   };
+  const handleDownloadCSV = async () => {
+    if (!storyboard) return;
+    try {
+      setIsDownloading(true);
+      toast.info("Preparing CSV data for export...");
+      const csvBlob = await exportToCSV(storyboard);
+      downloadBlob(
+        csvBlob,
+        `${storyboard.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}-metadata.csv`,
+      );
+      toast.success("CSV metadata exported successfully!");
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to export CSV file.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
   const getAspectRatioClass = (ratio: AspectRatio) => {
     switch (ratio) {
       case "16:9":
@@ -798,114 +896,160 @@ export default function App() {
         return "aspect-[9/16]";
       case "1:1":
         return "aspect-square";
+      case "4:3":
+        return "aspect-[4/3]";
+      case "3:4":
+        return "aspect-[3/4]";
       default:
         return "aspect-video";
     }
   };
   return (
-    <div className="min-h-screen bg-[#f8f9fb] text-slate-900 font-sans pb-20 selection:bg-violet-100 selection:text-violet-900">
-      {" "}
-      <Toaster position="top-center" theme="light" />{" "}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
-        {" "}
-        <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-          {" "}
-          <div className="flex items-center gap-3">
-            {" "}
-            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center shadow-sm">
-              {" "}
-              <ImageIcon className="w-4 h-4 text-white" />{" "}
-            </div>{" "}
-            <h1 className="text-lg font-bold tracking-tight text-slate-900">
-              Storyboard Suite
-            </h1>{" "}
-          </div>{" "}
-          <nav className="hidden md:flex items-center gap-1 ml-8 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
-            {" "}
+    <div className="min-h-screen bg-[#f8f9fb] text-slate-900 font-sans pb-20 selection:bg-violet-100 selection:text-violet-900 flex">
+      <Toaster position="top-center" theme="light" />
+
+      {/* Desktop Sidebar */}
+      <aside
+        className={`fixed md:sticky top-0 h-screen bg-white border-r border-slate-200 z-50 transition-all duration-300 hidden md:flex flex-col shadow-sm ${sidebarOpen ? "w-64" : "w-20"}`}
+      >
+        <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200">
+          {sidebarOpen && (
+            <div className="flex items-center gap-2 overflow-hidden">
+              <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center shrink-0 shadow-sm">
+                <ImageIcon className="w-4 h-4 text-white" />
+              </div>
+              <span className="font-bold tracking-tight text-slate-900 whitespace-nowrap">
+                Storyboard
+              </span>
+            </div>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="shrink-0 text-slate-500 hover:text-slate-900"
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            <Menu className="w-5 h-5" />
+          </Button>
+        </div>
+
+        <nav className="p-4 flex-col gap-2 flex-1 flex overflow-y-auto mt-4">
+          <div className="space-y-1 relative group">
             <Button
               variant="ghost"
-              size="sm"
               onClick={() => setAppState("idle")}
-              className={`rounded-md transition-all ${appState === "idle" ? "bg-violet-50 text-violet-700 font-medium" : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"}`}
+              className={`w-full justify-start ${sidebarOpen ? "px-4" : "px-0 justify-center"} ${appState === "idle" ? "bg-violet-50 text-violet-700 font-medium" : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"}`}
             >
-              {" "}
-              Idea{" "}
-            </Button>{" "}
-            {(analysis || suggestions.length > 0) && (
+              <LayoutTemplate className="w-5 h-5 shrink-0" />
+              {sidebarOpen && <span className="ml-3">Idea</span>}
+            </Button>
+            {!sidebarOpen && (
+              <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 bg-slate-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50">
+                Idea / Prompt
+              </div>
+            )}
+          </div>
+
+          {(analysis || suggestions.length > 0) && (
+            <div className="space-y-1 relative group">
               <Button
                 variant="ghost"
-                size="sm"
                 onClick={() => setAppState("needs_improvement")}
-                className={`rounded-md transition-all ${appState === "needs_improvement" ? "bg-amber-50 text-amber-700 font-medium" : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"}`}
+                className={`w-full justify-start ${sidebarOpen ? "px-4" : "px-0 justify-center"} ${appState === "needs_improvement" ? "bg-amber-50 text-amber-700 font-medium" : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"}`}
               >
-                {" "}
-                Analysis{" "}
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                {sidebarOpen && <span className="ml-3">Analysis</span>}
               </Button>
-            )}{" "}
-            {storyboard && (
+              {!sidebarOpen && (
+                <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 bg-slate-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50">
+                  Analysis
+                </div>
+              )}
+            </div>
+          )}
+
+          {storyboard && (
+            <div className="space-y-1 relative group">
               <Button
                 variant="ghost"
-                size="sm"
                 onClick={() => setAppState("ready")}
-                className={`rounded-md transition-all ${appState === "ready" ? "bg-violet-50 text-violet-700 font-medium" : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"}`}
+                className={`w-full justify-start ${sidebarOpen ? "px-4" : "px-0 justify-center"} ${appState === "ready" ? "bg-violet-50 text-violet-700 font-medium" : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"}`}
               >
-                {" "}
-                Storyboard{" "}
+                <Layout className="w-5 h-5 shrink-0" />
+                {sidebarOpen && <span className="ml-3">Storyboard</span>}
               </Button>
-            )}{" "}
-          </nav>{" "}
-          <div className="flex items-center gap-2">
-            <div className="md:hidden">
-              {" "}
+              {!sidebarOpen && (
+                <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 bg-slate-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50">
+                  Storyboard
+                </div>
+              )}
+            </div>
+          )}
+        </nav>
+      </aside>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 transition-all">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+            <div className="flex items-center gap-3 md:hidden">
+              <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center shadow-sm">
+                <ImageIcon className="w-4 h-4 text-white" />
+              </div>
+              <h1 className="text-lg font-bold tracking-tight text-slate-900 decoration-slate-200">
+                Storyboard
+              </h1>
+            </div>
+
+            {/* Desktop header title when sidebar is collapsed or not full width */}
+            <div className="hidden md:flex items-center">
+              {/* Optional page context could go here */}
+            </div>
+
+            <div className="flex items-center gap-2 md:hidden">
               <DropdownMenu>
-                {" "}
                 <DropdownMenuTrigger
                   render={
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="rounded-lg"
-                    />
+                    <Button variant="ghost" size="icon" className="rounded-lg">
+                      <Menu className="w-6 h-6 text-slate-700" />
+                    </Button>
                   }
-                >
-                  {" "}
-                  <Menu className="w-5 h-5 text-slate-600" />{" "}
-                </DropdownMenuTrigger>{" "}
+                />
                 <DropdownMenuContent
                   align="end"
-                  className="w-48 bg-white border border-slate-200 text-slate-900 rounded-xl"
+                  className="w-56 bg-white border border-slate-200 text-slate-900 rounded-xl shadow-xl mt-2 p-2"
                 >
-                  {" "}
                   <DropdownMenuItem
                     onClick={() => setAppState("idle")}
-                    className="hover:bg-slate-50 hover:text-slate-950 rounded-xl focus:bg-slate-100 m-1"
+                    className="hover:bg-slate-50 hover:text-slate-950 rounded-lg focus:bg-slate-100 py-3 cursor-pointer mb-1"
                   >
-                    {" "}
-                    Idea{" "}
-                  </DropdownMenuItem>{" "}
+                    <LayoutTemplate className="w-4 h-4 mr-3 text-slate-500" />
+                    <span className="font-medium">Idea</span>
+                  </DropdownMenuItem>
                   {(analysis || suggestions.length > 0) && (
                     <DropdownMenuItem
                       onClick={() => setAppState("needs_improvement")}
-                      className="hover:bg-slate-50 hover:text-slate-950 rounded-xl focus:bg-slate-100 m-1"
+                      className="hover:bg-slate-50 hover:text-slate-950 rounded-lg focus:bg-slate-100 py-3 cursor-pointer mb-1"
                     >
-                      {" "}
-                      Analysis{" "}
+                      <AlertCircle className="w-4 h-4 mr-3 text-amber-500" />
+                      <span className="font-medium">Analysis</span>
                     </DropdownMenuItem>
-                  )}{" "}
+                  )}
                   {storyboard && (
                     <DropdownMenuItem
                       onClick={() => setAppState("ready")}
-                      className="hover:bg-slate-50 hover:text-slate-950 rounded-xl focus:bg-slate-100 m-1"
+                      className="hover:bg-slate-50 hover:text-slate-950 rounded-lg focus:bg-slate-100 py-3 cursor-pointer"
                     >
-                      {" "}
-                      Storyboard{" "}
+                      <Layout className="w-4 h-4 mr-3 text-violet-500" />
+                      <span className="font-medium">Storyboard</span>
                     </DropdownMenuItem>
-                  )}{" "}
-                </DropdownMenuContent>{" "}
-              </DropdownMenu>{" "}
-            </div>{" "}
-          </div>{" "}
-          <div className="flex items-center gap-3">
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            <div className="flex items-center gap-3 ml-auto">
             {" "}
             {appState === "ready" &&
               storyboard?.scenes.some((s) =>
@@ -913,6 +1057,24 @@ export default function App() {
               ) && (
                 <>
                   {" "}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (allCompletedFrames.length === 0) {
+                        toast.error("Generate some frames first to see the preview.");
+                        return;
+                      }
+                      setIsPreviewOpen(true);
+                      setCurrentPreviewFrameIndex(0);
+                      setPreviewPlaying(true);
+                    }}
+                    className="rounded-lg bg-white border-slate-200 hover:bg-slate-100 text-slate-700 hover:text-slate-950 shadow-sm transition-all mr-2"
+                  >
+                    {" "}
+                    <Play className="w-4 h-4 mr-2 text-fuchsia-500" />{" "}
+                    Live Preview{" "}
+                  </Button>{" "}
                   <Button
                     variant="outline"
                     size="sm"
@@ -927,6 +1089,21 @@ export default function App() {
                       <DownloadCloud className="w-4 h-4 mr-2 text-violet-400" />
                     )}{" "}
                     Export PDF{" "}
+                  </Button>{" "}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadCSV}
+                    disabled={isDownloading}
+                    className="rounded-lg bg-white border-slate-200 hover:bg-slate-100 text-slate-700 hover:text-slate-950 shadow-sm transition-all"
+                  >
+                    {" "}
+                    {isDownloading ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin text-emerald-400" />
+                    ) : (
+                      <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-400" />
+                    )}{" "}
+                    Export CSV{" "}
                   </Button>{" "}
                   <Button
                     variant="default"
@@ -1038,6 +1215,17 @@ export default function App() {
                           setSkipAnalysisForCurrentPrompt(false);
                         }}
                       />{" "}
+                      <div className="absolute bottom-3 right-3 flex items-center gap-2 pointer-events-none">
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            prompt.length > 2700
+                              ? "bg-amber-50 text-amber-600 border-amber-200"
+                              : "bg-slate-50 text-slate-400 border-slate-100"
+                          } transition-colors tracking-tighter`}
+                        >
+                          {prompt.length} / 3000
+                        </span>
+                      </div>
                       {prompt && (
                         <Button
                           variant="ghost"
@@ -1068,30 +1256,30 @@ export default function App() {
                           <motion.div
                             initial={{ opacity: 0, scale: 0.9, y: 10 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
-                            className="relative w-full h-28 rounded-xl overflow-hidden border border-slate-200 shadow-md group"
+                            className="relative w-40 h-40 rounded-xl bg-slate-50 overflow-hidden border border-slate-200 shadow-md group"
                           >
                             {" "}
                             <img
                               src={sampleImage.url}
                               alt="Character Reference"
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              className="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform duration-500"
                             />{" "}
                             <button
                               onClick={() => setSampleImage(null)}
-                              className="absolute top-2 right-2 bg-black/60 text-slate-900 rounded-lg p-1.5 hover:bg-rose-500 transition-colors"
+                              className="absolute top-2 right-2 bg-black/60 text-slate-900 rounded-lg p-1.5 hover:bg-rose-500 transition-colors z-10"
                             >
                               {" "}
-                              <X className="w-3.5 h-3.5" />{" "}
+                              <X className="w-3.5 h-3.5 text-white" />{" "}
                             </button>{" "}
                           </motion.div>
                         ) : (
                           <Button
                             variant="outline"
-                            className="w-full h-28 rounded-xl border-dashed border-slate-200 text-slate-600 hover:text-slate-950 hover:border-violet-500/50 hover:bg-violet-500/5 transition-all font-normal active:scale-[0.98]"
+                            className="w-40 h-40 flex-col rounded-xl border-dashed border-slate-200 text-slate-600 hover:text-slate-950 hover:border-violet-500/50 hover:bg-violet-500/5 transition-all font-normal active:scale-[0.98]"
                             onClick={() => fileInputRef.current?.click()}
                           >
                             {" "}
-                            <User className="w-5 h-5 mr-2 text-violet-400" />{" "}
+                            <User className="w-6 h-6 mb-2 text-violet-400" />{" "}
                             Upload Character{" "}
                           </Button>
                         )}{" "}
@@ -1118,30 +1306,30 @@ export default function App() {
                           <motion.div
                             initial={{ opacity: 0, scale: 0.9, y: 10 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
-                            className="relative w-full h-28 rounded-xl overflow-hidden border border-slate-200 shadow-md group"
+                            className="relative w-40 h-40 rounded-xl bg-slate-50 overflow-hidden border border-slate-200 shadow-md group"
                           >
                             {" "}
                             <img
                               src={backgroundReferenceImage.url}
                               alt="Background Reference"
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              className="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform duration-500"
                             />{" "}
                             <button
                               onClick={() => setBackgroundReferenceImage(null)}
-                              className="absolute top-2 right-2 bg-black/60 text-slate-900 rounded-lg p-1.5 hover:bg-rose-500 transition-colors"
+                              className="absolute top-2 right-2 bg-black/60 text-slate-900 rounded-lg p-1.5 hover:bg-rose-500 transition-colors z-10"
                             >
                               {" "}
-                              <X className="w-3.5 h-3.5" />{" "}
+                              <X className="w-3.5 h-3.5 text-white" />{" "}
                             </button>{" "}
                           </motion.div>
                         ) : (
                           <Button
                             variant="outline"
-                            className="w-full h-28 rounded-xl border-dashed border-slate-200 text-slate-600 hover:text-slate-950 hover:border-violet-500/50 hover:bg-violet-500/5 transition-all font-normal active:scale-[0.98]"
+                            className="w-40 h-40 flex-col rounded-xl border-dashed border-slate-200 text-slate-600 hover:text-slate-950 hover:border-violet-500/50 hover:bg-violet-500/5 transition-all font-normal active:scale-[0.98]"
                             onClick={() => bgFileInputRef.current?.click()}
                           >
                             {" "}
-                            <MapPin className="w-5 h-5 mr-2 text-violet-400" />{" "}
+                            <MapPin className="w-6 h-6 mb-2 text-violet-400" />{" "}
                             Upload Background{" "}
                           </Button>
                         )}{" "}
@@ -1167,7 +1355,7 @@ export default function App() {
                       property into generic concepts.
                     </p>{" "}
                   </div>{" "}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-6 pt-4 items-end">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6 pt-4 items-end">
                     {" "}
                     <div className="space-y-3">
                       {" "}
@@ -1551,7 +1739,7 @@ export default function App() {
                     className="h-full bg-gradient-to-r from-fuchsia-600 to-rose-600 rounded-lg"
                     initial={{ width: 0 }}
                     animate={{ width: `${progress}%` }}
-                    transition={{ type: "spring", bounce: 0, duration: 0.5 }}
+                    transition={{ type: "tween", ease: "linear", duration: 0.4 }}
                   />{" "}
                 </div>{" "}
                 <div className="bg-white p-4 rounded-xl border border-slate-200 inline-block shadow-sm">
@@ -1730,9 +1918,27 @@ export default function App() {
                     </div>{" "}
                   </div>
                 )}{" "}
-                <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">
-                  Suggested Improvements
-                </h3>{" "}
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">
+                    Suggested Improvements
+                  </h3>
+                  {suggestions.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const content = suggestions.map((s, i) => `Suggestion ${i + 1}:\n\nExplanation: ${s.explanation}\nScenes: ${s.scenes}\nFrames Per Scene: ${s.framesPerScene}\nCharacters: ${s.characters.join(", ")}\n\nPrompt:\n${s.prompt}\n\n--------------------------------------------------\n\n`).join("");
+                        const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+                        downloadBlob(blob, "suggested_prompts.txt");
+                        toast.success("Suggested prompts downloaded!");
+                      }}
+                      className="rounded-lg bg-white border-slate-200 hover:bg-slate-100 text-slate-700 hover:text-slate-950 shadow-sm transition-all text-xs h-8"
+                    >
+                      <Download className="w-3.5 h-3.5 mr-2 text-violet-500" />
+                      Download Suggestions
+                    </Button>
+                  )}
+                </div>{" "}
                 {suggestions.map((s, i) => (
                   <motion.div
                     key={i}
@@ -1754,10 +1960,41 @@ export default function App() {
                       {" "}
                       <div className="h-[2px] w-0 bg-violet-600 hover:bg-violet-700 group-hover:w-full transition-all duration-500" />{" "}
                       <CardContent className="p-6 space-y-4">
-                        {" "}
-                        <p className="text-slate-900 font-medium leading-relaxed">
-                          {s.prompt}
-                        </p>{" "}
+                        <div className="flex justify-between items-start gap-4">
+                          <p className="text-slate-900 font-medium leading-relaxed flex-1 text-justify">
+                            {s.prompt}
+                          </p>
+                          <div className="flex flex-col items-end shrink-0 gap-1.5 pt-1">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-50 text-slate-400 border-slate-100 uppercase tracking-tighter">
+                              {s.prompt.length} chars
+                            </span>
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100/50 px-2 py-0.5 rounded border border-slate-200/50 flex items-center gap-1">
+                                <Layout className="w-2.5 h-2.5" /> {s.scenes} SCENES
+                              </span>
+                              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100/50 px-2 py-0.5 rounded border border-slate-200/50 flex items-center gap-1">
+                                <MonitorStop className="w-2.5 h-2.5" /> {s.framesPerScene} FRAMES/SCENE
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {s.characters && s.characters.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1.5 border-t border-slate-100/50">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mr-1 self-center">
+                              STORY CHARACTERS:
+                            </span>
+                            {s.characters.map((name, charIdx) => (
+                              <span
+                                key={charIdx}
+                                className="text-[10px] font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg border border-violet-100 flex items-center gap-1"
+                              >
+                                <User className="w-2.5 h-2.5" /> {name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
                         <div className="flex items-start gap-3 bg-emerald-50 text-emerald-700 p-3 rounded-xl border border-emerald-200 text-sm shadow-inner overflow-hidden relative">
                           {" "}
                           <div className="absolute inset-0 bg-emerald-500/5 mix-blend-overlay"></div>{" "}
@@ -1883,6 +2120,7 @@ export default function App() {
                         className="h-full bg-violet-600 hover:bg-violet-700 rounded-lg"
                         initial={{ width: 0 }}
                         animate={{ width: `${progress}%` }}
+                        transition={{ type: "tween", ease: "linear", duration: 0.4 }}
                       />{" "}
                     </div>{" "}
                     <p className="text-violet-600/60 text-xs italic uppercase tracking-widest font-bold">
@@ -2171,6 +2409,42 @@ export default function App() {
                                           </div>{" "}
                                         </div>
                                       )}{" "}
+                                      {frame.narrativeBeat && (
+                                        <div className="flex items-start gap-3 bg-white0 p-3 rounded-xl border border-slate-200 hover:border-blue-500/20 transition-colors">
+                                          {" "}
+                                          <div className="p-2 bg-blue-500/10 rounded-lg text-blue-600">
+                                            {" "}
+                                            <MessageSquare className="w-4 h-4" />{" "}
+                                          </div>{" "}
+                                          <div className="space-y-1">
+                                            {" "}
+                                            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">
+                                              Narrator's Voice
+                                            </p>{" "}
+                                            <p className="text-xs text-slate-700 leading-relaxed font-medium italic">
+                                              "{frame.narrativeBeat}"
+                                            </p>{" "}
+                                          </div>{" "}
+                                        </div>
+                                      )}{" "}
+                                      {frame.sceneDirectorNotes && (
+                                        <div className="flex items-start gap-3 bg-violet-50/50 p-4 rounded-xl border border-violet-100 group-hover:border-violet-300 transition-all shadow-inner">
+                                          {" "}
+                                          <div className="p-2.5 bg-violet-600 rounded-lg text-white shadow-sm">
+                                            {" "}
+                                            <Video className="w-4 h-4" />{" "}
+                                          </div>{" "}
+                                          <div className="space-y-1.5">
+                                            {" "}
+                                            <p className="text-[10px] font-black text-violet-600 uppercase tracking-[0.2em]">
+                                              Scene Director Notes
+                                            </p>{" "}
+                                            <p className="text-xs text-slate-800 leading-relaxed font-bold">
+                                              {frame.sceneDirectorNotes}
+                                            </p>{" "}
+                                          </div>{" "}
+                                        </div>
+                                      )}
                                     </div>
                                   )}{" "}
                                 </div>{" "}
@@ -2429,7 +2703,229 @@ export default function App() {
           </DialogFooter>{" "}
         </DialogContent>{" "}
       </Dialog>{" "}
+      <Dialog
+        open={isPreviewOpen}
+        onOpenChange={(open) => {
+          setIsPreviewOpen(open);
+          if (!open) setPreviewPlaying(false);
+        }}
+      >
+        {" "}
+        <DialogContent className="max-w-[95vw] w-full lg:max-w-7xl h-[90vh] bg-slate-950 border-slate-800 text-white rounded-2xl shadow-2xl p-0 overflow-hidden outline-none">
+          {allCompletedFrames.length > 0 && (
+            <div className="flex flex-col lg:flex-row h-full overflow-hidden">
+              {/* Left Side: Cinematic Presentation Area */}
+              <div className="flex-1 flex flex-col relative bg-black min-h-0">
+                <div className="relative flex-1 flex items-center justify-center overflow-hidden w-full h-full p-4 md:p-8">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={currentPreviewFrameIndex}
+                      initial={{ opacity: 0, scale: 1.1 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 1, ease: "easeInOut" }}
+                      className="relative w-full h-full flex items-center justify-center"
+                    >
+                      <div 
+                        className="relative shadow-2xl shadow-black/50 overflow-hidden bg-slate-900 border border-white/5"
+                        style={{ 
+                          maxHeight: '100%', 
+                          maxWidth: '100%', 
+                          aspectRatio: (storyboard?.aspectRatio === "custom" ? customAspectRatio : storyboard?.aspectRatio || "16:9").replace(':', '/') 
+                        }}
+                      >
+                        <img
+                          src={allCompletedFrames[currentPreviewFrameIndex].imageUrl}
+                          alt="Preview"
+                          className="w-full h-full object-contain"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+                    </motion.div>
+                  </AnimatePresence>
+                  
+                  {/* Overlay Info (Top) */}
+                  <div className="absolute top-0 left-0 right-0 p-6 bg-gradient-to-b from-black/90 via-black/40 to-transparent pointer-events-none z-20">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-xl md:text-2xl font-black tracking-tighter text-white drop-shadow-xl flex items-center gap-2">
+                          <span className="bg-fuchsia-600 px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">Live</span>
+                          {storyboard?.title}
+                        </h3>
+                        <p className="text-[10px] md:text-xs text-slate-300 font-bold uppercase tracking-[0.2em] mt-1 flex items-center gap-2">
+                          <MapPin className="w-3 h-3 text-fuchsia-400" />
+                          Scene: {allCompletedFrames[currentPreviewFrameIndex].sceneSetting}
+                        </p>
+                      </div>
+                      <div className="text-right hidden sm:block">
+                        <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Frame</p>
+                        <p className="text-xl font-black tabular-nums text-fuchsia-500">
+                          {currentPreviewFrameIndex + 1} <span className="text-white/20">/</span> {allCompletedFrames.length}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Playback Controls Overlay (Center/Hover) */}
+                  <div className="absolute inset-x-0 bottom-0 top-0 flex items-center justify-center gap-6 md:gap-12 opacity-0 hover:opacity-100 transition-opacity bg-black/20 z-30 group">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-white hover:bg-white/20 bg-black/40 backdrop-blur-md rounded-full h-12 w-12 md:h-16 md:w-16 transition-all hover:scale-110"
+                      onClick={() => setCurrentPreviewFrameIndex((prev) => (prev - 1 + allCompletedFrames.length) % allCompletedFrames.length)}
+                    >
+                      <ArrowRight className="w-6 h-6 md:w-8 md:h-8 rotate-180" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-white hover:bg-white/20 bg-black/40 backdrop-blur-md rounded-full h-16 w-16 md:h-20 md:w-20 transition-all hover:scale-110"
+                      onClick={() => setPreviewPlaying(!previewPlaying)}
+                    >
+                      {previewPlaying ? <Pause className="w-8 h-8 md:w-10 md:h-10 fill-current" /> : <Play className="w-8 h-8 md:w-10 md:h-10 fill-current ml-1" />}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-white hover:bg-white/20 bg-black/40 backdrop-blur-md rounded-full h-12 w-12 md:h-16 md:w-16 transition-all hover:scale-110"
+                      onClick={() => setCurrentPreviewFrameIndex((prev) => (prev + 1) % allCompletedFrames.length)}
+                    >
+                      <ArrowRight className="w-6 h-6 md:w-8 md:h-8" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Subtitles Area */}
+                <div className="bg-black/60 backdrop-blur-sm border-y border-white/5 p-4 md:p-6 flex items-center justify-center min-h-[80px] md:min-h-[100px] shrink-0 overflow-hidden relative z-40">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={`caption-${currentPreviewFrameIndex}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="max-w-3xl mx-auto text-center px-4"
+                    >
+                      <p className="text-base md:text-xl text-white font-medium italic leading-relaxed drop-shadow-md">
+                        "{allCompletedFrames[currentPreviewFrameIndex].caption}"
+                      </p>
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+
+                {/* Timeline / Progress Navigation */}
+                <div className="h-20 md:h-24 bg-slate-900 border-t border-white/5 flex items-center px-4 md:px-6 gap-3 overflow-x-auto no-scrollbar shrink-0 z-50">
+                  {allCompletedFrames.map((f, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        setCurrentPreviewFrameIndex(idx);
+                        setPreviewPlaying(false);
+                      }}
+                      className={`h-12 md:h-14 aspect-video shrink-0 rounded-md overflow-hidden border-2 cursor-pointer transition-all ${
+                        idx === currentPreviewFrameIndex 
+                          ? "border-fuchsia-500 scale-105 shadow-lg shadow-fuchsia-500/20" 
+                          : "border-transparent opacity-40 hover:opacity-100 hover:scale-105"
+                      }`}
+                    >
+                      <img src={f.imageUrl} className="w-full h-full object-cover" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Right Side: Director's Technical Dashboard */}
+              <div className="hidden lg:flex w-[380px] bg-slate-900/50 backdrop-blur-xl border-l border-white/5 flex-col h-full overflow-hidden shrink-0">
+                <div className="p-6 border-b border-white/10 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2">
+                    <Settings2 className="w-4 h-4 text-fuchsia-500" />
+                    <h4 className="text-sm font-black uppercase tracking-widest text-slate-200">Director's Suite</h4>
+                  </div>
+                  <div className="px-2 py-1 bg-white/5 rounded text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
+                    Technical Specs
+                  </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-6">
+                  {/* Technical Notes Content */}
+                  <div className="space-y-4">
+                    {allCompletedFrames[currentPreviewFrameIndex].cameraIntent && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-black text-fuchsia-500 uppercase tracking-widest flex items-center gap-2">
+                          <Video className="w-3 h-3" /> Camera Intent
+                        </p>
+                        <p className="text-sm text-slate-300 leading-relaxed font-medium bg-white/5 p-3 rounded-xl border border-white/5">
+                          {allCompletedFrames[currentPreviewFrameIndex].cameraIntent}
+                        </p>
+                      </div>
+                    )}
+                    {allCompletedFrames[currentPreviewFrameIndex].lightingIntent && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">
+                          <Sun className="w-3 h-3" /> Lighting Intent
+                        </p>
+                        <p className="text-sm text-slate-300 leading-relaxed font-medium bg-white/5 p-3 rounded-xl border border-white/5">
+                          {allCompletedFrames[currentPreviewFrameIndex].lightingIntent}
+                        </p>
+                      </div>
+                    )}
+                    {allCompletedFrames[currentPreviewFrameIndex].characterExpression && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-black text-violet-400 uppercase tracking-widest flex items-center gap-2">
+                          <User className="w-3 h-3" /> Character Expression
+                        </p>
+                        <p className="text-sm text-slate-300 leading-relaxed font-medium bg-white/5 p-3 rounded-xl border border-white/5">
+                          {allCompletedFrames[currentPreviewFrameIndex].characterExpression}
+                        </p>
+                      </div>
+                    )}
+                    {allCompletedFrames[currentPreviewFrameIndex].costumeDesign && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest flex items-center gap-2">
+                          <Shirt className="w-3 h-3" /> Costume Design
+                        </p>
+                        <p className="text-sm text-slate-300 leading-relaxed font-medium bg-white/5 p-3 rounded-xl border border-white/5">
+                          {allCompletedFrames[currentPreviewFrameIndex].costumeDesign}
+                        </p>
+                      </div>
+                    )}
+                    {allCompletedFrames[currentPreviewFrameIndex].cinematographyNotes && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+                          <Layout className="w-3 h-3" /> Cinematography
+                        </p>
+                        <p className="text-sm text-slate-300 leading-relaxed font-medium bg-white/5 p-3 rounded-xl border border-white/5">
+                          {allCompletedFrames[currentPreviewFrameIndex].cinematographyNotes}
+                        </p>
+                      </div>
+                    )}
+                    {allCompletedFrames[currentPreviewFrameIndex].sceneDirectorNotes && (
+                      <div className="space-y-1.5 pt-2">
+                        <div className="p-4 bg-violet-600/20 rounded-xl border border-violet-500/30 shadow-inner">
+                          <p className="text-[10px] font-black text-violet-400 uppercase tracking-[0.2em] mb-2 flex items-center gap-2">
+                            <MonitorStop className="w-3 h-3" /> Scene Director's Notes
+                          </p>
+                          <p className="text-sm text-slate-100 leading-relaxed font-bold">
+                            {allCompletedFrames[currentPreviewFrameIndex].sceneDirectorNotes}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-6 border-t border-white/5 bg-slate-900 shrink-0">
+                  <div className="flex items-center justify-between text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                    <span>Resolution: {resolution}</span>
+                    <span>Ratio: {storyboard?.aspectRatio === "custom" ? customAspectRatio : storyboard?.aspectRatio}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>{" "}
+      </Dialog>{" "}
       <Toaster position="bottom-right" richColors />{" "}
+      </div>
     </div>
   );
 }

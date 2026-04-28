@@ -113,7 +113,71 @@ export async function createZip(files: { name: string; blob: Blob }[]): Promise<
   return zip.generateAsync({ type: "blob" });
 }
 
-export async function exportToPDF(storyboard: any, resolution: "original" | "720p" | "1080p" | "4k", aspectRatio: string, onProgress?: (progress: number) => void): Promise<Blob> {
+export async function exportToCSV(storyboard: any): Promise<Blob> {
+  // Pre-production and Review Tracking columns for professional studio setups (e.g. ShotGrid, StudioBinder)
+  const headers = [
+    "Scene",
+    "Shot",
+    "Status", // Validation Loop: Pending, WIP, Internal Review, Client Review, Approved
+    "Priority", // Low, Med, High, Critical
+    "Caption / Action",
+    "Location Setting",
+    "Camera Intent",
+    "Lighting Intent",
+    "Character Expression",
+    "Costume / Wardrobe",
+    "Director's Notes",
+    "Reviewer Comments", // Validation Loop: For feedback
+    "Approved By", // Validation Loop: Role/Name
+    "Image Asset Link"
+  ];
+  
+  const rows = [headers];
+  
+  const sanitize = (text: string) => {
+    if (!text) return "";
+    // Replace newlines with spaces to avoid breaking CSV rows if opened in basic editors,
+    // though proper quotes (which we use) should handle it. It's safer to strip them.
+    let cleaned = text.replace(/[\n\r]+/g, ' ').replace(/"/g, '""');
+    return `"${cleaned}"`;
+  };
+
+  storyboard.scenes.forEach((scene: any) => {
+    scene.frames.forEach((frame: any) => {
+      rows.push([
+        scene.sceneNumber.toString(),
+        frame.frameNumber.toString(),
+        `"Pending"`, // Default status for validation loop
+        `"Medium"`,  // Default priority
+        sanitize(frame.caption),
+        sanitize(scene.setting),
+        sanitize(frame.camera && frame.camera !== "Default" ? frame.camera : frame.cameraIntent),
+        sanitize(frame.lighting && frame.lighting !== "Default" ? frame.lighting : frame.lightingIntent),
+        sanitize(frame.characterExpression),
+        sanitize(frame.costumeDesign),
+        sanitize(frame.cinematographyNotes),
+        `""`, // Reviewer Comments placeholder
+        `""`, // Approved By placeholder
+        frame.imageUrl ? `"data:image/png;base64,..."` : "" // Don't export massive base64 strings to CSV, it breaks Excel completely.
+      ]);
+    });
+  });
+  
+  const csvContent = rows.map(r => r.join(",")).join("\n");
+  
+  // Add UTF-8 BOM (Byte Order Mark) at the beginning so Excel opens it with correct encoding automatically
+  const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+  return new Blob([bom, csvContent], { type: "text/csv;charset=utf-8;" });
+}
+
+export interface PDFPromptInfo {
+  originalPrompt: string;
+  hasCharacterReference: boolean;
+  hasBackgroundReference: boolean;
+  selectedStyle: string;
+}
+
+export async function exportToPDF(storyboard: any, promptInfo: PDFPromptInfo, resolution: "original" | "720p" | "1080p" | "4k", aspectRatio: string, onProgress?: (progress: number) => void): Promise<Blob> {
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
@@ -124,14 +188,50 @@ export async function exportToPDF(storyboard: any, resolution: "original" | "720
   const margin = 15;
   const contentWidth = pageWidth - margin * 2;
   
-  doc.setFontSize(20);
+  doc.setFontSize(22);
   doc.text(storyboard.title || "Storyboard", margin, 20);
   
-  doc.setFontSize(12);
-  const splitSummary = doc.splitTextToSize(storyboard.storySummary || "", contentWidth);
-  doc.text(splitSummary, margin, 30);
+  // Add Date and Time
+  const now = new Date();
+  const dateStr = now.toLocaleDateString() + ' ' + now.toLocaleTimeString();
+  doc.setFontSize(8);
+  doc.setTextColor(150, 150, 150);
+  doc.text(`Generated on: ${dateStr}`, margin, 25);
   
-  let yPos = 30 + (splitSummary.length * 6) + 10;
+  doc.setFontSize(12);
+  doc.setTextColor(60, 60, 60);
+  const splitSummary = doc.splitTextToSize(storyboard.storySummary || "", contentWidth);
+  doc.text(splitSummary, margin, 32);
+  
+  let yPos = 32 + (splitSummary.length * 6) + 12;
+
+  // Render Input/Reference Information block
+  doc.setFillColor(245, 245, 245);
+  doc.setDrawColor(200, 200, 200);
+  
+  doc.setFontSize(10);
+  doc.setTextColor(30, 30, 30);
+  
+  const promptText = `Original Input Prompt: "${promptInfo.originalPrompt}"`;
+  const splitPromptInfo = doc.splitTextToSize(promptText, contentWidth - 10);
+  
+  const refText = `References Used: ${promptInfo.hasCharacterReference ? '[✓] Character Reference' : '[ ] No Character Reference'} | ${promptInfo.hasBackgroundReference ? '[✓] Background Reference' : '[ ] No Background Reference'}\nChosen Style: ${promptInfo.selectedStyle}`;
+  const splitRefInfo = doc.splitTextToSize(refText, contentWidth - 10);
+  
+  const totalBoxHeight = (splitPromptInfo.length * 5) + (splitRefInfo.length * 5) + 16;
+  
+  // Draw the rounded box
+  doc.roundedRect(margin, yPos, contentWidth, totalBoxHeight, 2, 2, 'FD');
+  
+  // Draw text inside box
+  doc.setFont("helvetica", "italic");
+  doc.text(splitPromptInfo, margin + 5, yPos + 8);
+  doc.setFont("helvetica", "bold");
+  doc.text(splitRefInfo, margin + 5, yPos + 12 + (splitPromptInfo.length * 5));
+  doc.setFont("helvetica", "normal");
+  
+  yPos += totalBoxHeight + 15;
+  doc.setTextColor(0, 0, 0);
 
   const totalFrames = storyboard.scenes.reduce((acc: number, s: any) => acc + s.frames.length, 0);
   let processedCount = 0;
@@ -168,8 +268,8 @@ export async function exportToPDF(storyboard: any, resolution: "original" | "720
 
       if (frame.imageUrl && frame.status === "completed") {
         try {
-          // Process image - use "original" to avoid cropping in PDF
-          const { blob: processedBlob, width: actualWidth, height: actualHeight } = await processImage(frame.imageUrl, resolution, "original", "jpeg");
+          // Process image using the matched aspect ratio to ensure consistency with UI and ZIP
+          const { blob: processedBlob, width: actualWidth, height: actualHeight } = await processImage(frame.imageUrl, resolution, aspectRatio, "jpeg");
           const base64Data = await new Promise<string>((resolve) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result as string);
@@ -205,15 +305,15 @@ export async function exportToPDF(storyboard: any, resolution: "original" | "720
           doc.setFontSize(9);
           doc.setTextColor(100, 100, 100);
           
-          if (frame.cameraIntent) {
-            const cameraText = `CAMERA: ${frame.cameraIntent}`;
+          if (frame.camera || frame.cameraIntent) {
+            const cameraText = `CAMERA: ${frame.camera && frame.camera !== "Default" ? frame.camera : frame.cameraIntent}`;
             const splitCamera = doc.splitTextToSize(cameraText, contentWidth);
             doc.text(splitCamera, margin, yPos);
             yPos += (splitCamera.length * 4);
           }
           
-          if (frame.lightingIntent) {
-            const lightingText = `LIGHTING: ${frame.lightingIntent}`;
+          if (frame.lighting || frame.lightingIntent) {
+            const lightingText = `LIGHTING: ${frame.lighting && frame.lighting !== "Default" ? frame.lighting : frame.lightingIntent}`;
             const splitLighting = doc.splitTextToSize(lightingText, contentWidth);
             doc.text(splitLighting, margin, yPos);
             yPos += (splitLighting.length * 4);
